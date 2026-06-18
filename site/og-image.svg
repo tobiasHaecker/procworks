@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f86ff"/>
+      <stop offset="1" stop-color="#8a5bff"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="0.85" cy="0.0" r="0.7">
+      <stop offset="0" stop-color="#18223a"/>
+      <stop offset="1" stop-color="#0f1420" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.05" cy="0.05" r="0.6">
+      <stop offset="0" stop-color="#1a1633"/>
+      <stop offset="1" stop-color="#0f1420" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4f86ff"/>
+      <stop offset="0.7" stop-color="#8a5bff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#0f1420"/>
+  <rect width="1200" height="630" fill="url(#glow1)"/>
+  <rect width="1200" height="630" fill="url(#glow2)"/>
+
+  <!-- Accent border line at top -->
+  <rect x="0" y="0" width="1200" height="6" fill="url(#accent)"/>
+
+  <!-- Brand row -->
+  <g transform="translate(96, 110)">
+    <rect width="72" height="72" rx="16" fill="url(#accent)"/>
+    <text x="36" y="50" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+          font-size="40" font-weight="800" fill="#ffffff" text-anchor="middle">P</text>
+    <text x="92" y="50" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+          font-size="34" font-weight="700" fill="#e6ebf5">ProcWorks</text>
+  </g>
+
+  <!-- Eyebrow -->
+  <g transform="translate(96, 232)">
+    <rect width="250" height="40" rx="20" fill="#4f86ff" fill-opacity="0.14"/>
+    <text x="24" y="26" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+          font-size="17" font-weight="700" letter-spacing="1.5" fill="#4f86ff">OPEN SOURCE · BUSL-1.1</text>
+  </g>
+
+  <!-- Headline -->
+  <text x="94" y="360" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+        font-size="80" font-weight="800" letter-spacing="-1" fill="#e6ebf5">Korrekte Prozesse.</text>
+  <text x="94" y="452" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+        font-size="80" font-weight="800" letter-spacing="-1" fill="url(#title)">Per Konstruktion.</text>
+
+  <!-- Subline -->
+  <text x="96" y="520" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+        font-size="26" font-weight="400" fill="#9aa6bf">Stabile Prozessmodellierung &amp; -ausführung – Correctness by Construction.</text>
+
+  <!-- Footer domain -->
+  <text x="96" y="582" font-family="Segoe UI, system-ui, -apple-system, Roboto, Arial, sans-serif"
+        font-size="24" font-weight="700" fill="#4f86ff">procworks.de</text>
+</svg>
