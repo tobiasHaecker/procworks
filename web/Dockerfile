@@ -9,6 +9,10 @@
 
 FROM caddy:2-alpine
 
+# Apply available OS security patches on top of the pinned base image
+# (e.g. OpenSSL CVE fixes that ship ahead of a new caddy image).
+RUN apk --no-cache -U upgrade
+
 # Static single-page app assets.
 COPY web/ /srv/
 

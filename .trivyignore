@@ -1,0 +1,7 @@
+# Trivy-Ausnahmen mit Begründung (regelmäßig überprüfen).
+#
+# CVE-2026-42504 — Go-stdlib (MIME-Header-Decoding, HIGH), gefixt in Go 1.26.4.
+# Betrifft die Binärdatei /usr/bin/caddy im offiziellen caddy:2-alpine-Image,
+# das derzeit noch mit Go 1.26.3 gebaut ist. Nicht durch uns behebbar; entfernen,
+# sobald ein neueres caddy-Image (mit gepatchtem Go) veröffentlicht ist.
+CVE-2026-42504
