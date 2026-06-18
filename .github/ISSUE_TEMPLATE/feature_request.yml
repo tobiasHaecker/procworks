@@ -1,0 +1,34 @@
+name: Feature-Vorschlag
+description: Eine Idee oder Verbesserung vorschlagen
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: Welches Problem soll gelöst werden? Welcher Anwendungsfall steht dahinter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Vorgeschlagene Lösung
+      description: Wie könnte die Lösung aussehen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativen
+      description: Welche Alternativen hast du erwogen?
+    validations:
+      required: false
+  - type: checkboxes
+    id: correctness
+    attributes:
+      label: Correctness by Construction
+      description: ProcWorks hält Korrektheit im Kern. Bitte bestätigen.
+      options:
+        - label: Der Vorschlag respektiert den Validate-before-Commit-Ansatz (Korrektheitslogik im Kern, nicht in der GUI).
+          required: false

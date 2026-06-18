@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ProcWorks &middot; API-Client</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">CbC</div>
+      <div>
+        <b>ProcWorks</b>
+        <small>Correctness by Construction</small>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-view="model" class="active"><span class="ico">&#9635;</span> Modellieren</button>
+      <button data-view="data"><span class="ico">&#9783;</span> Datensicht</button>
+      <button data-view="org"><span class="ico">&#9823;</span> Ressourcensicht</button>
+      <button data-view="run"><span class="ico">&#9654;</span> Ausf&uuml;hrung</button>
+      <button data-view="tasks"><span class="ico">&#9776;</span> Meine Aufgaben</button>
+      <button data-view="monitor"><span class="ico">&#9788;</span> Monitoring</button>
+    </nav>
+    <div class="side-foot">
+      <div>Status: <span id="conn-pill" class="pill pill-gray">getrennt</span></div>
+      <label class="api-field">API
+        <input id="api-base" type="text" spellcheck="false" />
+      </label>
+      <div class="muted">Die GUI ist ein reiner API-Client &ndash; alle Korrektheits&shy;entscheidungen trifft der Kern.</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="view-title">Modellieren</h1>
+      <span class="sub" id="view-sub"></span>
+      <span class="spacer"></span>
+      <div id="schema-picker" class="picker"></div>
+    </header>
+    <section class="content" id="content"></section>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root" class="toast-root"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

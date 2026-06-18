@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ProcWorks · UI-Prototyp</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --bg-elev: #161d2e;
+    --bg-elev2: #1d2740;
+    --line: #2a3550;
+    --txt: #e6ebf5;
+    --txt-dim: #9aa6bf;
+    --accent: #4f86ff;
+    --accent-soft: #21345e;
+    --green: #2fbf71;
+    --green-soft: #163a2a;
+    --amber: #f0a93b;
+    --amber-soft: #3d2e12;
+    --red: #ef5b6b;
+    --red-soft: #3a1a20;
+    --gray: #6b7794;
+    --gray-soft: #232c42;
+    --running: #4f86ff;
+    --radius: 12px;
+    --shadow: 0 8px 30px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 80% -10%, #18223a 0%, transparent 60%), var(--bg);
+    color: var(--txt);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* ---- Layout ---- */
+  .app { display: grid; grid-template-columns: 224px 1fr; height: 100vh; }
+  .sidebar {
+    background: var(--bg-elev);
+    border-right: 1px solid var(--line);
+    padding: 18px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 18px; }
+  .brand .logo {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), #8a5bff);
+    display: grid; place-items: center; font-weight: 800; color: #fff;
+  }
+  .brand b { font-size: 15px; letter-spacing: .2px; }
+  .brand small { display:block; color: var(--txt-dim); font-weight: 500; font-size: 11px; }
+  .nav { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+  .nav button {
+    text-align: left; border: 0; background: transparent; color: var(--txt-dim);
+    padding: 10px 12px; border-radius: 9px; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; gap: 10px; transition: .15s;
+  }
+  .nav button:hover { background: var(--bg-elev2); color: var(--txt); }
+  .nav button.active { background: var(--accent-soft); color: #fff; }
+  .nav .ico { width: 18px; text-align: center; opacity: .9; }
+  .side-foot { margin-top: auto; color: var(--txt-dim); font-size: 11px; padding: 10px 8px; line-height: 1.5; }
+  .side-foot .pill { display:inline-block; background: var(--green-soft); color: var(--green); padding: 2px 8px; border-radius: 20px; font-weight:600; }
+
+  .main { overflow: auto; }
+  .topbar {
+    position: sticky; top: 0; z-index: 5; backdrop-filter: blur(8px);
+    background: rgba(15,20,32,.78); border-bottom: 1px solid var(--line);
+    padding: 14px 26px; display: flex; align-items: center; gap: 16px;
+  }
+  .topbar h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  .topbar .sub { color: var(--txt-dim); font-size: 13px; }
+  .spacer { flex: 1; }
+  .btn {
+    border: 1px solid var(--line); background: var(--bg-elev2); color: var(--txt);
+    padding: 8px 14px; border-radius: 9px; cursor: pointer; font-size: 13px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 8px; transition: .15s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.ghost { background: transparent; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.green { background: var(--green); border-color: var(--green); color: #04210f; }
+  .content { padding: 22px 26px 60px; }
+
+  /* ---- Cards / KPI ---- */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+  .kpi { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+  .kpi .label { color: var(--txt-dim); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .kpi .value { font-size: 28px; font-weight: 750; margin-top: 6px; }
+  .kpi .trend { font-size: 12px; margin-top: 4px; }
+  .kpi .trend.up { color: var(--green); }
+  .kpi .trend.down { color: var(--red); }
+
+  .panel { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .panel-h { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
+  .panel-h h2 { margin: 0; font-size: 15px; }
+  .panel-h .sub { color: var(--txt-dim); font-size: 12px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1.35fr 1fr; gap: 18px; }
+  @media (max-width: 1100px){ .grid-2 { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2,1fr);} }
+
+  /* ---- Process map ---- */
+  .flow { padding: 26px 18px; overflow-x: auto; }
+  .flow-row { display: flex; align-items: center; gap: 0; min-width: 720px; }
+  .node {
+    position: relative; min-width: 120px; padding: 12px 14px; border-radius: 10px;
+    border: 1.5px solid var(--line); background: var(--bg-elev2); text-align: center; font-size: 13px;
+    transition: .2s;
+  }
+  .node .nstate { display:block; font-size: 10px; margin-top: 4px; color: var(--txt-dim); text-transform: uppercase; letter-spacing: .5px;}
+  .node.completed { border-color: var(--green); background: var(--green-soft); }
+  .node.completed .nstate { color: var(--green); }
+  .node.running { border-color: var(--running); background: var(--accent-soft); box-shadow: 0 0 0 0 rgba(79,134,255,.6); animation: pulse 1.8s infinite; }
+  .node.running .nstate { color: #9ec0ff; }
+  .node.skipped { border-color: var(--gray); background: var(--gray-soft); opacity: .65; }
+  .node.skipped .nstate { color: var(--gray); }
+  .node.failed { border-color: var(--red); background: var(--red-soft); }
+  .node.failed .nstate { color: var(--red); }
+  .node.waiting { border-style: dashed; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(79,134,255,.55); }
+    70% { box-shadow: 0 0 0 12px rgba(79,134,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(79,134,255,0); }
+  }
+  .edge { width: 34px; height: 2px; background: var(--line); position: relative; flex: 0 0 auto; }
+  .edge::after { content:""; position:absolute; right:-1px; top:-3px; border:4px solid transparent; border-left-color: var(--line); }
+  .edge.done { background: var(--green); }
+  .edge.done::after { border-left-color: var(--green); }
+  .gw { width: 40px; height: 40px; transform: rotate(45deg); border:1.5px solid var(--amber); background: var(--amber-soft); display:grid; place-items:center; border-radius:7px; flex:0 0 auto; }
+  .gw span { transform: rotate(-45deg); font-weight:700; color: var(--amber); font-size: 13px; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; padding: 12px 18px; border-top: 1px solid var(--line); font-size: 12px; color: var(--txt-dim); }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:middle; }
+
+  /* ---- Table ---- */
+  .toolbar { display:flex; gap:10px; align-items:center; padding: 12px 18px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  .input { background: var(--bg); border: 1px solid var(--line); color: var(--txt); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; }
+  .input:focus { border-color: var(--accent); }
+  .chip { border:1px solid var(--line); background:transparent; color: var(--txt-dim); padding:6px 12px; border-radius:20px; font-size:12px; cursor:pointer; }
+  .chip.active { background: var(--accent-soft); color:#fff; border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { text-align:left; color: var(--txt-dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; padding: 10px 18px; border-bottom:1px solid var(--line); }
+  tbody td { padding: 12px 18px; border-bottom: 1px solid var(--line); }
+  tbody tr { cursor: pointer; transition: .12s; }
+  tbody tr:hover { background: var(--bg-elev2); }
+  tbody tr.sel { background: var(--accent-soft); }
+  .badge { display:inline-flex; align-items:center; gap:6px; padding: 3px 9px; border-radius:20px; font-size:11px; font-weight:600; }
+  .badge i { width:7px; height:7px; border-radius:50%; }
+  .b-running { background: var(--accent-soft); color:#9ec0ff;} .b-running i{ background: var(--running);}
+  .b-completed { background: var(--green-soft); color: var(--green);} .b-completed i{ background: var(--green);}
+  .b-failed { background: var(--red-soft); color: var(--red);} .b-failed i{ background: var(--red);}
+  .b-waiting { background: var(--amber-soft); color: var(--amber);} .b-waiting i{ background: var(--amber);}
+  .ver { font-variant-numeric: tabular-nums; color: var(--txt-dim); }
+  .sla.ok { color: var(--green); } .sla.warn { color: var(--amber);} .sla.over { color: var(--red);}
+
+  /* ---- Drawer ---- */
+  .drawer-wrap { position: fixed; inset:0; z-index: 30; display:none; }
+  .drawer-wrap.open { display:block; }
+  .drawer-bg { position:absolute; inset:0; background: rgba(0,0,0,.5); }
+  .drawer {
+    position:absolute; right:0; top:0; height:100%; width: 460px; max-width: 92vw;
+    background: var(--bg-elev); border-left:1px solid var(--line); box-shadow: var(--shadow);
+    padding: 0; overflow:auto; animation: slidein .22s ease;
+  }
+  @keyframes slidein { from { transform: translateX(40px); opacity:.4;} to { transform:none; opacity:1;} }
+  .drawer-h { padding: 18px 20px; border-bottom:1px solid var(--line); display:flex; align-items:flex-start; gap:12px; }
+  .drawer-h h3 { margin:0 0 2px; font-size:16px; }
+  .drawer-sec { padding: 16px 20px; border-bottom:1px solid var(--line); }
+  .drawer-sec h4 { margin:0 0 12px; font-size:12px; text-transform:uppercase; letter-spacing:.6px; color: var(--txt-dim); }
+  .kv { display:flex; justify-content:space-between; padding:7px 0; font-size:13px; border-bottom:1px dashed var(--line); }
+  .kv:last-child{border-bottom:0;}
+  .kv span { color: var(--txt-dim); }
+  .timeline { position: relative; margin-left: 8px; }
+  .tl { position:relative; padding: 0 0 16px 22px; }
+  .tl::before { content:""; position:absolute; left:5px; top:2px; bottom:-4px; width:2px; background: var(--line); }
+  .tl:last-child::before { display:none; }
+  .tl .dot { position:absolute; left:0; top:2px; width:12px; height:12px; border-radius:50%; background: var(--green); border:2px solid var(--bg-elev); }
+  .tl.run .dot { background: var(--running); }
+  .tl.future .dot { background: var(--gray); }
+  .tl .t { font-size: 13px; font-weight:600; }
+  .tl .meta { font-size: 11px; color: var(--txt-dim); margin-top:2px; }
+  .adhoc-tag { display:inline-block; margin-left:8px; font-size:10px; background: #3a2a55; color:#c4a6ff; padding:1px 7px; border-radius: 10px; }
+
+  /* ---- Migration assistant ---- */
+  .mig-head { display:flex; gap:14px; align-items:center; background: var(--bg-elev); border:1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px; }
+  .mig-head .vchip { font-weight:700; padding:6px 12px; border-radius:8px; background: var(--accent-soft); color:#9ec0ff; font-variant-numeric:tabular-nums; }
+  .mig-head .arrow { color: var(--txt-dim); font-size: 18px;}
+  .summary { display:flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .scard { flex:1; min-width: 150px; border:1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; background: var(--bg-elev); }
+  .scard .n { font-size: 26px; font-weight: 750; }
+  .scard.green { border-color: #245a3e;} .scard.green .n{ color: var(--green);}
+  .scard.gray .n { color: var(--gray); }
+  .scard small { color: var(--txt-dim); }
+
+  .mlist { display:flex; flex-direction:column; gap:10px; }
+  .mrow { display:grid; grid-template-columns: 14px 1.4fr 1fr auto; align-items:center; gap:14px; padding: 14px 16px; border:1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev); transition:.15s; }
+  .mrow:hover { border-color: var(--accent); }
+  .mrow .status-dot { width: 12px; height:12px; border-radius:50%; }
+  .mrow.can .status-dot { background: var(--green); box-shadow:0 0 0 4px var(--green-soft); }
+  .mrow.block .status-dot { background: var(--gray); box-shadow:0 0 0 4px var(--gray-soft); }
+  .mrow .iid { font-weight:600; }
+  .mrow .reason { font-size:12px; color: var(--txt-dim); margin-top:2px;}
+  .mrow .pos { font-size:12px; }
+  .tag-can { color: var(--green); font-weight:600; font-size:12px;}
+  .tag-block { color: var(--gray); font-weight:600; font-size:12px; }
+  .tag-later { color: var(--amber); font-weight:600; font-size:12px; }
+  .mrow.done { opacity:.55; }
+  .mrow.done .iid::after { content:" ? übernommen"; color: var(--green); font-size:11px; font-weight:600; }
+
+  .diff { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .diff .col { border:1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; background: var(--bg); }
+  .diff h4 { margin:0 0 10px; font-size:12px; color: var(--txt-dim); text-transform:uppercase; letter-spacing:.5px;}
+  .diff ul { margin:0; padding-left: 18px; font-size:13px; line-height:1.9; }
+  .add { color: var(--green); } .del { color: var(--red); } .mov { color: var(--amber); }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); opacity:0; pointer-events:none;
+    background: var(--green); color:#04210f; padding: 12px 20px; border-radius: 10px; font-weight:600; box-shadow: var(--shadow); transition:.25s; z-index:50; }
+  .toast.show { opacity:1; transform: translateX(-50%) translateY(0); }
+
+  .hint { font-size:12px; color: var(--txt-dim); background: var(--accent-soft); border:1px solid #2c447a; padding:10px 14px; border-radius:10px; margin-bottom:16px; display:flex; gap:10px; align-items:flex-start;}
+  .hint b{ color:#cfe0ff;}
+  .hidden { display:none !important; }
+
+  /* ---- Modeling view ---- */
+  .model-grid { display:grid; grid-template-columns: 1fr 320px; gap:18px; align-items:start; }
+  @media (max-width: 1100px){ .model-grid { grid-template-columns: 1fr; } }
+  .valbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; background: var(--bg-elev); border:1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin-bottom:16px; }
+  .valbar .ok-pill { display:inline-flex; align-items:center; gap:8px; font-weight:700; color: var(--green); background: var(--green-soft); padding:7px 13px; border-radius:20px; font-size:13px; }
+  .rulechip { font-size:12px; padding:5px 11px; border-radius:20px; border:1px solid var(--line); display:inline-flex; gap:6px; align-items:center; }
+  .rulechip.good { color: var(--green); border-color:#245a3e; background: var(--green-soft); }
+  .rulechip.warn { color: var(--amber); border-color:#5a4a20; background: var(--amber-soft); }
+  .rulechip b { font-weight:700; }
+
+  .canvas { background: var(--bg-elev); border:1px solid var(--line); border-radius: var(--radius); padding: 30px 20px; overflow-x:auto; }
+  .canvas-row { display:flex; align-items:center; min-width: max-content; }
+  .mnode {
+    position:relative; min-width: 130px; padding: 14px 14px; border-radius:11px; text-align:center;
+    border:1.5px solid var(--line); background: var(--bg-elev2); cursor:pointer; transition:.15s; font-size:13px;
+  }
+  .mnode:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .mnode.sel { border-color: var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .mnode .mtype { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.5px; color: var(--txt-dim); margin-bottom:5px; }
+  .mnode .ring { position:absolute; top:8px; right:8px; width:10px; height:10px; border-radius:50%; }
+  .mnode.ready .ring { background: var(--green); box-shadow:0 0 0 3px var(--green-soft); }
+  .mnode.incomplete .ring { background: var(--amber); box-shadow:0 0 0 3px var(--amber-soft); }
+  .mnode.terminal { min-width: 64px; border-radius: 50%; width:64px; height:64px; display:grid; place-items:center; padding:0; }
+  .mnode.terminal.start { border-color: var(--green); }
+  .mnode.terminal.end { border-color: var(--red); border-width:3px; }
+  .mnode.gateway { width:62px; height:62px; min-width:62px; transform: rotate(45deg); padding:0; display:grid; place-items:center; border-color: var(--amber); background: var(--amber-soft); }
+  .mnode.gateway .glabel { transform: rotate(-45deg); font-weight:800; color: var(--amber); font-size:14px; }
+  .mnode.gateway .mtype, .mnode.gateway .ring { display:none; }
+  .gw-cap { font-size:11px; color:var(--txt-dim); text-align:center; margin-top:6px; max-width:120px; }
+
+  .connector { display:flex; flex-direction:column; align-items:center; justify-content:center; flex:0 0 auto; }
+  .connector .line { width:30px; height:2px; background: var(--line); }
+  .plus {
+    width:26px; height:26px; border-radius:50%; border:1.5px dashed var(--accent); color: var(--accent);
+    background: var(--bg); cursor:pointer; font-size:16px; line-height:1; display:grid; place-items:center;
+    transition:.15s; margin: 0; font-weight:700;
+  }
+  .plus:hover { background: var(--accent); color:#fff; border-style:solid; transform: scale(1.12); }
+
+  /* popover for guided ops */
+  .popover { position:absolute; z-index:40; width:300px; background: var(--bg-elev); border:1px solid var(--line); border-radius:12px; box-shadow: var(--shadow); padding:8px; }
+  .popover .pop-h { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color: var(--txt-dim); padding:8px 10px 6px; }
+  .opt { display:flex; gap:11px; align-items:flex-start; padding:9px 10px; border-radius:9px; cursor:pointer; transition:.12s; }
+  .opt:hover { background: var(--bg-elev2); }
+  .opt .oi { width:26px; height:26px; border-radius:7px; display:grid; place-items:center; font-size:14px; flex:0 0 auto; background: var(--accent-soft); color:#9ec0ff; }
+  .opt .ot { font-size:13px; font-weight:600; }
+  .opt .od { font-size:11px; color: var(--txt-dim); margin-top:1px; }
+  .pop-foot { font-size:11px; color: var(--txt-dim); padding:8px 10px; border-top:1px solid var(--line); margin-top:4px; }
+
+  /* properties panel */
+  .props { background: var(--bg-elev); border:1px solid var(--line); border-radius: var(--radius); position:sticky; top:78px; }
+  .props .ph { padding:14px 16px; border-bottom:1px solid var(--line); font-weight:650; font-size:14px; }
+  .props .pb { padding:14px 16px; }
+  .props .empty { color: var(--txt-dim); font-size:13px; text-align:center; padding:30px 16px; }
+  .bind { display:flex; align-items:center; gap:10px; padding:11px 0; border-bottom:1px dashed var(--line); }
+  .bind:last-of-type { border-bottom:0; }
+  .bind .bi { width:30px; height:30px; border-radius:8px; display:grid; place-items:center; font-size:14px; flex:0 0 auto; }
+  .bind.on .bi { background: var(--green-soft); color: var(--green); }
+  .bind.off .bi { background: var(--amber-soft); color: var(--amber); }
+  .bind .bt { font-size:13px; font-weight:600; flex:1; }
+  .bind .bs { font-size:11px; color: var(--txt-dim); }
+  .bind .mini { border:1px solid var(--line); background: var(--bg-elev2); color: var(--txt); font-size:11px; padding:5px 10px; border-radius:7px; cursor:pointer; font-weight:600; }
+  .bind .mini:hover { border-color: var(--accent); }
+  .bind.on .mini { color: var(--green); border-color:#245a3e; }
+  .undo-row { display:flex; gap:8px; margin-bottom:16px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">P</div>
+      <div><b>ProcWorks</b><small>Correctness by Construction</small></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-view="monitor" class="active"><span class="ico">??</span> Monitoring</button>
+      <button data-view="migrate"><span class="ico">??</span> Revisionsübernahme</button>
+      <button data-view="model"><span class="ico">?</span> Modellierung</button>
+      <button data-view="org" disabled><span class="ico">??</span> Organisation</button>
+      <button data-view="data" disabled><span class="ico">???</span> Datenelemente</button>
+    </nav>
+    <div class="side-foot">
+      <span class="pill">? Backend stabil</span><br/><br/>
+      UI-Prototyp · Demo-Daten<br/>Alle Aktionen laufen über geprüfte Operationskontrakte.
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- ============ MONITOR VIEW ============ -->
+    <section id="view-monitor">
+      <div class="topbar">
+        <div>
+          <h1>Monitoring aktiver Instanzen</h1>
+          <div class="sub">Prozess: <b>Urlaubsantrag</b> · Live-Status</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn ghost" onclick="toggleLive()"><span id="liveDot">??</span> <span id="liveTxt">Live</span></button>
+        <button class="btn">Export</button>
+      </div>
+      <div class="content">
+        <div class="kpis">
+          <div class="kpi"><div class="label">Aktive Instanzen</div><div class="value" id="kpiActive">24</div><div class="trend up">? 3 heute gestartet</div></div>
+          <div class="kpi"><div class="label">Laufend</div><div class="value" style="color:var(--running)">17</div><div class="trend">Ø 2,4 Tage Durchlaufzeit</div></div>
+          <div class="kpi"><div class="label">Wartend / SLA-kritisch</div><div class="value" style="color:var(--amber)">5</div><div class="trend down">? 2 überfällig</div></div>
+          <div class="kpi"><div class="label">Fehler (24h)</div><div class="value" style="color:var(--red)">1</div><div class="trend">Connector-Timeout</div></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-h"><h2>Live-Prozesslandkarte</h2><span class="sub">Instanz #1042 · Version v3</span><div class="spacer"></div></div>
+            <div class="flow">
+              <div class="flow-row">
+                <div class="node completed">Antrag erfassen<span class="nstate">completed</span></div>
+                <div class="edge done"></div>
+                <div class="gw"><span>XOR</span></div>
+                <div class="edge done"></div>
+                <div class="node completed">Prüfung Team<span class="nstate">completed</span></div>
+                <div class="edge done"></div>
+                <div class="node running">Genehmigung<span class="nstate">running</span></div>
+                <div class="edge"></div>
+                <div class="node waiting">Buchung HR<span class="nstate">activated</span></div>
+                <div class="edge"></div>
+                <div class="node">Benachrichtigung<span class="nstate">not_activated</span></div>
+              </div>
+            </div>
+            <div class="legend">
+              <span><i style="background:var(--green)"></i>Abgeschlossen</span>
+              <span><i style="background:var(--running)"></i>Laufend</span>
+              <span><i style="background:var(--amber)"></i>Aktiviert/Wartend</span>
+              <span><i style="background:var(--gray)"></i>Übersprungen</span>
+              <span><i style="background:var(--red)"></i>Fehler</span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-h"><h2>Datenfluss &amp; Bearbeiter</h2><span class="sub">Schritt „Genehmigung“</span></div>
+            <div class="drawer-sec" style="border:0">
+              <div class="kv"><span>Bearbeiter (BZR)</span><b>Rolle: Vorgesetzte/r</b></div>
+              <div class="kv"><span>aufgelöst zu</span><b>M. Berger</b></div>
+              <div class="kv"><span>Pflicht-Input</span><b>antrag.id · tage</b></div>
+              <div class="kv"><span>Datenquelle</span><b>Instanz + SAP (Resturlaub)</b></div>
+              <div class="kv"><span>Schreibt</span><b>genehmigt: Boolean</b></div>
+            </div>
+            <div class="legend" style="border-top:1px solid var(--line)">Eingriffe (Ad-hoc, Eskalation) laufen über geprüfte Kontrakte ? K/D/Z/R bleiben erhalten.</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:18px">
+          <div class="panel-h"><h2>Instanzen</h2><span class="sub" id="rowCount"></span></div>
+          <div class="toolbar">
+            <input type="search" class="input" id="search" placeholder="?? Suche (ID, Bearbeiter, Auftrag) …" oninput="renderRows()" style="min-width:240px"/>
+            <div id="filters">
+              <button class="chip active" data-f="all">Alle</button>
+              <button class="chip" data-f="running">Laufend</button>
+              <button class="chip" data-f="waiting">Wartend</button>
+              <button class="chip" data-f="failed">Fehler</button>
+              <button class="chip" data-f="completed">Abgeschlossen</button>
+            </div>
+            <div class="spacer"></div>
+            <span class="sub" style="color:var(--txt-dim);font-size:12px">Klick auf Zeile ? Detail</span>
+          </div>
+          <table>
+            <thead><tr><th>Instanz</th><th>Auftrag / Betreff</th><th>Status</th><th>Schritt</th><th>Version</th><th>Bearbeiter</th><th>SLA</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MIGRATE VIEW ============ -->
+    <section id="view-migrate" class="hidden">
+      <div class="topbar">
+        <div>
+          <h1>Geführte Revisionsübernahme</h1>
+          <div class="sub">Prozess „Urlaubsantrag" · neue Revision freigegeben</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn" onclick="showView('monitor')">? Zurück zum Monitoring</button>
+        <button class="btn green" id="bulkBtn" onclick="bulkMigrate()">Alle migrierbaren übernehmen</button>
+      </div>
+      <div class="content">
+        <div class="hint">? <div><b>Stabil geprüft im Hintergrund:</b> Für jede laufende Instanz wurden die Konsistenzkriterien <b>M1–M5</b> ausgewertet. Sie entscheiden nur, ob eine als <b>migrierbar</b> erkannte Instanz die neue Version übernimmt. Blockierte Instanzen laufen konsistent auf ihrer Version weiter.</div></div>
+
+        <div class="mig-head">
+          <span class="vchip">v3 (aktuell)</span>
+          <span class="arrow">?</span>
+          <span class="vchip" style="background:var(--green-soft);color:var(--green)">v4 (neu freigegeben)</span>
+          <div class="spacer"></div>
+          <button class="btn ghost" onclick="toggleDiff()">? Revisions-Diff anzeigen</button>
+        </div>
+
+        <div id="diffBox" class="panel hidden" style="margin-bottom:18px">
+          <div class="panel-h"><h2>Was hat sich von v3 zu v4 geändert?</h2></div>
+          <div style="padding:16px 18px" class="diff">
+            <div class="col"><h4>Struktur</h4><ul>
+              <li class="add">+ Neuer Schritt „Compliance-Check" (parallel zu Genehmigung)</li>
+              <li class="add">+ Datenelement „risikostufe" (Integer)</li>
+              <li class="mov">~ „Buchung HR" nach Compliance verschoben</li>
+            </ul></div>
+            <div class="col"><h4>Daten &amp; Ressourcen</h4><ul>
+              <li class="add">+ Pflicht-Input „risikostufe" für „Buchung HR"</li>
+              <li class="add">+ BZR „Compliance-Team" für neuen Schritt</li>
+              <li class="del">? Optionaler Hinweistext entfernt</li>
+            </ul></div>
+          </div>
+        </div>
+
+        <div class="summary">
+          <div class="scard green"><div class="n" id="cntCan">0</div><small>migrierbar (kann übernehmen)</small></div>
+          <div class="scard gray"><div class="n" id="cntBlock">0</div><small>bleibt auf v3 (Konsistenz)</small></div>
+          <div class="scard"><div class="n" id="cntLater" style="color:var(--amber)">0</div><small>später automatisch übernehmbar</small></div>
+        </div>
+
+        <div class="mlist" id="mlist"></div>
+      </div>
+    </section>
+
+    <!-- ============ MODEL VIEW ============ -->
+    <section id="view-model" class="hidden">
+      <div class="topbar">
+        <div>
+          <h1>Modellierung · geführte Konstruktion</h1>
+          <div class="sub">Prozess: <b>Urlaubsantrag</b> · Entwurf v4 (unveröffentlicht)</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn ghost" onclick="undoModel()" id="undoBtn" disabled>? Rückgängig</button>
+        <button class="btn primary" id="publishBtn" onclick="publishModel()">Freigeben (v4)</button>
+      </div>
+      <div class="content">
+        <div class="hint">? <div><b>Correctness by Construction:</b> Das Modell ist nach <b>jeder</b> Operation strukturell gültig (Stufe&nbsp;A). Über die <b>„+"</b>-Punkte werden ausschließlich korrektheitserhaltende Operationen angeboten – z.&nbsp;B. fügt eine Verzweigung immer einen <b>vollständigen, balancierten Block</b> (Split + Join) ein. Freigeben (Stufe&nbsp;B) ist erst möglich, wenn alle Bindungen (Dienst, Bearbeiter, Daten) vollständig sind.</div></div>
+
+        <div class="valbar">
+          <span class="ok-pill">? Modell strukturell gültig (Stufe A)</span>
+          <span class="rulechip good">K · Kontrollfluss <b>?</b></span>
+          <span class="rulechip good">D · Datenfluss <b>?</b></span>
+          <span class="rulechip good">Z · Ressourcen <b>?</b></span>
+          <span class="rulechip" id="chipB">B · Freigabefähig <b>—</b></span>
+          <div class="spacer"></div>
+          <span class="sub" id="bSummary" style="color:var(--txt-dim);font-size:12px"></span>
+        </div>
+
+        <div class="model-grid">
+          <div class="canvas">
+            <div class="canvas-row" id="canvasRow"></div>
+          </div>
+
+          <!-- Properties / binding panel -->
+          <div class="props">
+            <div class="ph" id="propTitle">Eigenschaften</div>
+            <div class="pb" id="propBody">
+              <div class="empty">Element auswählen, um Bindungen (Dienst&nbsp;· Bearbeiter&nbsp;· Daten) zu prüfen und zu vervollständigen.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- Drawer for instance detail -->
+<div class="drawer-wrap" id="drawer">
+  <div class="drawer-bg" onclick="closeDrawer()"></div>
+  <div class="drawer">
+    <div class="drawer-h">
+      <div style="flex:1">
+        <h3 id="dTitle">Instanz</h3>
+        <div class="sub" id="dSub" style="color:var(--txt-dim);font-size:12px"></div>
+      </div>
+      <button class="btn ghost" onclick="closeDrawer()">?</button>
+    </div>
+    <div class="drawer-sec">
+      <h4>Überblick</h4>
+      <div class="kv"><span>Status</span><b id="dStatus"></b></div>
+      <div class="kv"><span>Schema-Version</span><b id="dVer"></b></div>
+      <div class="kv"><span>Aktueller Schritt</span><b id="dStep"></b></div>
+      <div class="kv"><span>Bearbeiter</span><b id="dAgent"></b></div>
+      <div class="kv"><span>Gestartet</span><b id="dStart"></b></div>
+    </div>
+    <div class="drawer-sec">
+      <h4>Verlauf (Zeitreise)</h4>
+      <div class="timeline" id="dTimeline"></div>
+    </div>
+    <div class="drawer-sec">
+      <h4>Aktionen (geprüft)</h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="toast('Ad-hoc-Editor geöffnet · Operationen R1/R2-geprüft')">Ad-hoc ändern</button>
+        <button class="btn" onclick="toast('Eskalation ausgelöst · über Kontrakt verarbeitet')">Eskalieren</button>
+        <button class="btn" onclick="toast('Instanz pausiert (SUSPENDED)')">Pausieren</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="popover hidden" id="popover"></div>
+
+<script>
+// ---------------- Demo data ----------------
+const instances = [
+  { id:"#1042", subject:"Urlaub · KW 28–30", status:"running", step:"Genehmigung", ver:"v3", agent:"M. Berger", sla:"ok", slaTxt:"in Zeit", adhoc:false },
+  { id:"#1043", subject:"Urlaub · KW 31", status:"running", step:"Prüfung Team", ver:"v3", agent:"S. Klein", sla:"ok", slaTxt:"in Zeit", adhoc:false },
+  { id:"#1031", subject:"Urlaub · KW 27", status:"waiting", step:"Buchung HR", ver:"v3", agent:"HR-Pool", sla:"warn", slaTxt:"1 Tag offen", adhoc:false },
+  { id:"#1029", subject:"Sonderurlaub", status:"waiting", step:"Genehmigung", ver:"v2", agent:"L. Frei", sla:"over", slaTxt:"2 Tage überfällig", adhoc:true },
+  { id:"#1044", subject:"Urlaub · KW 32", status:"running", step:"Antrag erfassen", ver:"v3", agent:"T. Hofer", sla:"ok", slaTxt:"in Zeit", adhoc:false },
+  { id:"#1025", subject:"Urlaub · KW 26", status:"completed", step:"— abgeschlossen", ver:"v2", agent:"—", sla:"ok", slaTxt:"erledigt", adhoc:false },
+  { id:"#1040", subject:"Bildungsurlaub", status:"failed", step:"Buchung HR", ver:"v3", agent:"HR-Pool", sla:"over", slaTxt:"Connector-Fehler", adhoc:false },
+  { id:"#1045", subject:"Urlaub · KW 33", status:"running", step:"Genehmigung", ver:"v3", agent:"M. Berger", sla:"ok", slaTxt:"in Zeit", adhoc:false },
+];
+const stMap = {
+  running:["b-running","Laufend"], completed:["b-completed","Abgeschlossen"],
+  failed:["b-failed","Fehler"], waiting:["b-waiting","Wartend"]
+};
+let activeFilter = "all";
+
+// ---------------- Navigation ----------------
+function showView(v){
+  const views = ["monitor","migrate","model"];
+  views.forEach(name=>{
+    const el = document.getElementById("view-"+name);
+    if(el) el.classList.toggle("hidden", name!==v);
+  });
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active", b.dataset.view===v));
+  closePopover();
+}
+document.getElementById("nav").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b || b.disabled) return;
+  showView(b.dataset.view);
+});
+
+// ---------------- Filters & table ----------------
+document.getElementById("filters").addEventListener("click", e=>{
+  const c = e.target.closest(".chip"); if(!c) return;
+  activeFilter = c.dataset.f;
+  document.querySelectorAll("#filters .chip").forEach(x=>x.classList.toggle("active", x===c));
+  renderRows();
+});
+function renderRows(){
+  const q = document.getElementById("search").value.toLowerCase();
+  const tb = document.getElementById("rows"); tb.innerHTML="";
+  const list = instances.filter(i=>{
+    const okF = activeFilter==="all" || i.status===activeFilter;
+    const okQ = !q || (i.id+i.subject+i.agent).toLowerCase().includes(q);
+    return okF && okQ;
+  });
+  list.forEach(i=>{
+    const [cls,label] = stMap[i.status];
+    const tr = document.createElement("tr");
+    tr.onclick = ()=>openDrawer(i);
+    tr.innerHTML = `
+      <td><b>${i.id}</b></td>
+      <td>${i.subject} ${i.adhoc?'<span class="adhoc-tag">ad-hoc</span>':''}</td>
+      <td><span class="badge ${cls}"><i></i>${label}</span></td>
+      <td>${i.step}</td>
+      <td class="ver">${i.ver}</td>
+      <td>${i.agent}</td>
+      <td class="sla ${i.sla}">${i.slaTxt}</td>`;
+    tb.appendChild(tr);
+  });
+  document.getElementById("rowCount").textContent = `${list.length} von ${instances.length}`;
+}
+
+// ---------------- Drawer ----------------
+function openDrawer(i){
+  document.getElementById("dTitle").textContent = "Instanz "+i.id;
+  document.getElementById("dSub").textContent = i.subject;
+  const [,label] = stMap[i.status];
+  document.getElementById("dStatus").textContent = label;
+  document.getElementById("dVer").textContent = i.ver;
+  document.getElementById("dStep").textContent = i.step;
+  document.getElementById("dAgent").textContent = i.agent;
+  document.getElementById("dStart").textContent = "12.06.2026, 09:14";
+  const steps = [
+    {t:"Antrag erfassen", m:"abgeschlossen · T. Hofer · 09:14", c:""},
+    {t:"Prüfung Team", m:"abgeschlossen · S. Klein · 10:02", c:""},
+    {t:i.step, m:"läuft · "+i.agent, c:"run"},
+    {t:"Buchung HR", m:"ausstehend", c:"future"},
+    {t:"Benachrichtigung", m:"ausstehend", c:"future"},
+  ];
+  document.getElementById("dTimeline").innerHTML = steps.map(s=>
+    `<div class="tl ${s.c}"><div class="dot"></div><div class="t">${s.t}</div><div class="meta">${s.m}</div></div>`).join("");
+  document.getElementById("drawer").classList.add("open");
+}
+function closeDrawer(){ document.getElementById("drawer").classList.remove("open"); }
+
+// ---------------- Live toggle ----------------
+let live=true, liveTimer=null;
+function toggleLive(){
+  live=!live;
+  document.getElementById("liveDot").textContent = live?"??":"?";
+  document.getElementById("liveTxt").textContent = live?"Live":"Pausiert";
+  if(live) startLive(); else clearInterval(liveTimer);
+}
+function startLive(){
+  clearInterval(liveTimer);
+  liveTimer = setInterval(()=>{
+    const el = document.getElementById("kpiActive");
+    // subtle live pulse on KPI
+    el.style.transition="color .3s"; el.style.color="var(--accent)";
+    setTimeout(()=>el.style.color="var(--txt)",300);
+  }, 3500);
+}
+
+// ---------------- Migration assistant ----------------
+const migrations = [
+  { id:"#1044", subject:"Urlaub · KW 32", state:"can", pos:"bei „Antrag erfassen“ (vor Änderung)", reason:"M2–M5 erfüllt · Änderung liegt in der Zukunft" },
+  { id:"#1043", subject:"Urlaub · KW 31", state:"can", pos:"bei „Prüfung Team“ (vor Änderung)", reason:"M2–M5 erfüllt · neue Pflichtdaten erst später" },
+  { id:"#1045", subject:"Urlaub · KW 33", state:"can", pos:"bei „Genehmigung“", reason:"M2–M5 erfüllt · Compliance parallel einfügbar" },
+  { id:"#1042", subject:"Urlaub · KW 28–30", state:"later", pos:"„Genehmigung“ RUNNING", reason:"Blockiert nach M3, bis laufender Schritt endet" },
+  { id:"#1031", subject:"Urlaub · KW 27", state:"block", pos:"bei „Buchung HR“ (hinter Änderung)", reason:"M2 verletzt · Schritt bereits durchlaufen, „risikostufe“ fehlt rückwirkend" },
+  { id:"#1029", subject:"Sonderurlaub", state:"block", pos:"v2 · mit Ad-hoc-Delta", reason:"M5 verletzt · Ad-hoc-Änderung kollidiert mit v4" },
+];
+const migDone = new Set();
+function renderMig(){
+  const wrap = document.getElementById("mlist"); wrap.innerHTML="";
+  let can=0, block=0, later=0;
+  migrations.forEach(m=>{
+    if(m.state==="can") can++; else if(m.state==="later") later++; else block++;
+    const done = migDone.has(m.id);
+    const tagCls = m.state==="can"?"tag-can":m.state==="later"?"tag-later":"tag-block";
+    const tagTxt = m.state==="can"?"? kann übernehmen":m.state==="later"?"? später automatisch":"? bleibt auf v3";
+    const rowCls = m.state==="can"?"can":"block";
+    const btn = m.state==="can" && !done
+      ? `<button class="btn green" onclick="migrateOne('${m.id}')">Übernehmen</button>`
+      : (done ? `<span class="tag-can">? erledigt</span>`
+        : `<button class="btn" disabled title="aus Konsistenzgründen nicht möglich">übernehmen</button>`);
+    const div = document.createElement("div");
+    div.className = `mrow ${rowCls} ${done?'done':''}`;
+    div.innerHTML = `
+      <div class="status-dot"></div>
+      <div><div class="iid">${m.id} · ${m.subject}</div><div class="reason">${m.reason}</div></div>
+      <div class="pos"><span class="${tagCls}">${tagTxt}</span><div class="reason">${m.pos}</div></div>
+      <div>${btn}</div>`;
+    wrap.appendChild(div);
+  });
+  document.getElementById("cntCan").textContent = can - countDoneCan();
+  document.getElementById("cntBlock").textContent = block;
+  document.getElementById("cntLater").textContent = later;
+  const remaining = migrations.some(m=>m.state==="can" && !migDone.has(m.id));
+  document.getElementById("bulkBtn").disabled = !remaining;
+}
+function countDoneCan(){ return [...migDone].length; }
+function migrateOne(id){
+  migDone.add(id);
+  renderMig();
+  toast(`Instanz ${id} atomar auf v4 übernommen · auditiert`);
+}
+function bulkMigrate(){
+  let n=0;
+  migrations.forEach(m=>{ if(m.state==="can" && !migDone.has(m.id)){ migDone.add(m.id); n++; }});
+  renderMig();
+  toast(`${n} migrierbare Instanzen übernommen · jede einzeln transaktional`);
+}
+function toggleDiff(){ document.getElementById("diffBox").classList.toggle("hidden"); }
+
+// ---------------- Toast ----------------
+let toastTimer=null;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove("show"), 2600);
+}
+
+// ---------------- Modeling (Correctness by Construction) ----------------
+// Model = lineare Sequenz aus Knoten. Knotentypen: start, task, service, gateway(+join), end.
+// Jede Operation fügt nur korrektheitserhaltende, strukturell vollständige Bausteine ein.
+let model = [
+  { id:"start", type:"start", name:"Start" },
+  { id:"t1", type:"task", name:"Antrag erfassen", svc:true, staff:true, data:true },
+  { id:"t2", type:"task", name:"Prüfung Team", svc:true, staff:true, data:true },
+  { id:"t3", type:"task", name:"Genehmigung", svc:true, staff:true, data:false },
+  { id:"end", type:"end", name:"Ende" },
+];
+let modelHistory = [];
+let selectedNode = null;
+let seq = 100;
+const nid = () => "n"+(++seq);
+
+// Welche Operationen sind an einer Einfügestelle gültig? (hier: an jeder Sequenzkante alle Basisbausteine)
+const OPERATIONS = [
+  { key:"task",    icon:"??", title:"Benutzer-Aufgabe", desc:"Manueller Schritt mit Bearbeiter (BZR).",
+    build:()=>[{ id:nid(), type:"task", name:"Neue Aufgabe", svc:true, staff:false, data:false }] },
+  { key:"service", icon:"??", title:"Automatischer Dienst", desc:"Service-Aufruf / Konnektor ohne Bearbeiter.",
+    build:()=>[{ id:nid(), type:"service", name:"Neuer Dienst", svc:false, staff:true, data:false }] },
+  { key:"xor",     icon:"?", title:"XOR-Verzweigung (Block)", desc:"Fügt Split + Join als balancierten Block ein – nie offen.",
+    build:()=>{ const g=nid(); return [
+      { id:g, type:"gateway", gw:"XOR", name:"Bedingung?" },
+      { id:nid(), type:"task", name:"Zweig A", svc:true, staff:false, data:false },
+      { id:nid(), type:"gateway", gw:"XOR", name:"Zusammenführung", join:g } ]; } },
+  { key:"and",     icon:"?", title:"Parallele Verzweigung (Block)", desc:"AND-Split + AND-Join, automatisch balanciert.",
+    build:()=>{ const g=nid(); return [
+      { id:g, type:"gateway", gw:"AND", name:"parallel" },
+      { id:nid(), type:"task", name:"Parallel-Aufgabe", svc:true, staff:false, data:false },
+      { id:nid(), type:"gateway", gw:"AND", name:"Synchronisation", join:g } ]; } },
+];
+
+function snapshot(){ modelHistory.push(JSON.stringify(model)); document.getElementById("undoBtn").disabled = false; }
+function undoModel(){
+  if(!modelHistory.length) return;
+  model = JSON.parse(modelHistory.pop());
+  selectedNode = null;
+  document.getElementById("undoBtn").disabled = modelHistory.length===0;
+  renderModel();
+  toast("Letzte Operation rückgängig gemacht · Modell bleibt gültig");
+}
+
+function nodeIsTaskLike(n){ return n.type==="task" || n.type==="service"; }
+function nodeReady(n){
+  if(!nodeIsTaskLike(n)) return true;
+  return n.svc && n.staff && n.data;
+}
+function openCount(){
+  return model.filter(n=>nodeIsTaskLike(n) && !nodeReady(n)).length;
+}
+
+function renderModel(){
+  const row = document.getElementById("canvasRow");
+  row.innerHTML = "";
+  model.forEach((n, idx)=>{
+    // Knoten
+    row.appendChild(renderNode(n));
+    // Verbinder mit "+"-Einfügepunkt (nicht hinter dem End-Knoten)
+    if(idx < model.length-1){
+      const conn = document.createElement("div");
+      conn.className = "connector";
+      conn.innerHTML = `<div class="line"></div>`;
+      const plus = document.createElement("button");
+      plus.className = "plus"; plus.textContent = "+";
+      plus.title = "Korrektheitserhaltend einfügen";
+      plus.onclick = (e)=>{ e.stopPropagation(); openPopover(plus, idx); };
+      conn.appendChild(plus);
+      const l2 = document.createElement("div"); l2.className="line"; conn.appendChild(l2);
+      row.appendChild(conn);
+    }
+  });
+  // Validierungsleiste / Freigabe
+  const open = openCount();
+  const chipB = document.getElementById("chipB");
+  const pubBtn = document.getElementById("publishBtn");
+  if(open===0){
+    chipB.className = "rulechip good"; chipB.innerHTML = "B · Freigabefähig <b>?</b>";
+    document.getElementById("bSummary").textContent = "Alle Bindungen vollständig – Stufe B erfüllt.";
+    pubBtn.disabled = false;
+  } else {
+    chipB.className = "rulechip warn"; chipB.innerHTML = `B · Freigabefähig <b>${open} offen</b>`;
+    document.getElementById("bSummary").textContent = `${open} Aufgabe(n) mit offener Bindung – Struktur gültig, Freigabe noch gesperrt.`;
+    pubBtn.disabled = true;
+  }
+}
+
+function renderNode(n){
+  if(n.type==="start" || n.type==="end"){
+    const d = document.createElement("div");
+    d.className = `mnode terminal ${n.type}`;
+    d.innerHTML = n.type==="start" ? "?" : "?";
+    return d;
+  }
+  if(n.type==="gateway"){
+    const wrap = document.createElement("div");
+    wrap.style.display="flex"; wrap.style.flexDirection="column"; wrap.style.alignItems="center";
+    const d = document.createElement("div");
+    d.className = "mnode gateway";
+    d.innerHTML = `<span class="glabel">${n.gw==="AND" ? "?" : "×"}</span>`;
+    d.onclick = ()=>selectNode(n);
+    wrap.appendChild(d);
+    const cap = document.createElement("div"); cap.className="gw-cap"; cap.textContent = n.name;
+    wrap.appendChild(cap);
+    return wrap;
+  }
+  // task / service
+  const ready = nodeReady(n);
+  const d = document.createElement("div");
+  d.className = `mnode ${ready?"ready":"incomplete"} ${selectedNode && selectedNode.id===n.id ? "sel":""}`;
+  d.innerHTML = `<span class="ring"></span><span class="mtype">${n.type==="service"?"Dienst":"Aufgabe"}</span>${n.name}`;
+  d.onclick = ()=>selectNode(n);
+  return d;
+}
+
+// ---- guided operation popover ----
+let popInsertAfter = null;
+function openPopover(anchor, afterIdx){
+  popInsertAfter = afterIdx;
+  const pop = document.getElementById("popover");
+  pop.innerHTML = `<div class="pop-h">Korrektheitserhaltend einfügen</div>` +
+    OPERATIONS.map((op,i)=>`
+      <div class="opt" onclick="applyOperation(${i})">
+        <div class="oi">${op.icon}</div>
+        <div><div class="ot">${op.title}</div><div class="od">${op.desc}</div></div>
+      </div>`).join("") +
+    `<div class="pop-foot">Nur Operationen, die Stufe A (Struktur) garantiert erhalten, werden angeboten.</div>`;
+  pop.classList.remove("hidden");
+  const r = anchor.getBoundingClientRect();
+  let left = r.left + window.scrollX - 137;
+  left = Math.max(12, Math.min(left, window.innerWidth - 312));
+  pop.style.left = left + "px";
+  pop.style.top = (r.bottom + window.scrollY + 8) + "px";
+}
+function closePopover(){ const p=document.getElementById("popover"); if(p) p.classList.add("hidden"); }
+document.addEventListener("click", (e)=>{
+  const pop = document.getElementById("popover");
+  if(pop && !pop.classList.contains("hidden") && !pop.contains(e.target) && !e.target.classList.contains("plus")){
+    closePopover();
+  }
+});
+
+function applyOperation(opIdx){
+  snapshot();
+  const op = OPERATIONS[opIdx];
+  const block = op.build();
+  model.splice(popInsertAfter+1, 0, ...block);
+  closePopover();
+  // neu eingefügte Aufgabe direkt selektieren (zum Vervollständigen der Bindungen)
+  const firstTask = block.find(nodeIsTaskLike);
+  selectedNode = firstTask || null;
+  renderModel();
+  if(firstTask) selectNode(firstTask);
+  toast(`„${op.title}" eingefügt · Struktur bleibt gültig (Stufe A)`);
+}
+
+// ---- properties / binding panel ----
+function selectNode(n){
+  selectedNode = n;
+  renderModel();
+  const body = document.getElementById("propBody");
+  document.getElementById("propTitle").textContent = "Eigenschaften · " + (n.name||"Gateway");
+  if(n.type==="gateway"){
+    body.innerHTML = `<div class="bind on"><div class="bi">?</div><div><div class="bt">${n.gw}-Gateway</div><div class="bs">Teil eines balancierten Blocks – kann nicht offen werden.</div></div></div>
+      <div class="bind on"><div class="bi">?</div><div class="bt">Kontrollfluss (K)</div><div class="bs">strukturell garantiert</div></div>`;
+    return;
+  }
+  if(!nodeIsTaskLike(n)){
+    body.innerHTML = `<div class="empty">Terminal-Knoten – keine Bindungen erforderlich.</div>`;
+    return;
+  }
+  const rowFor = (key, on, icon, label, sub) => `
+    <div class="bind ${on?'on':'off'}">
+      <div class="bi">${on?'?':icon}</div>
+      <div class="bt">${label}<div class="bs">${on?'gebunden':sub}</div></div>
+      <button class="mini" onclick="toggleBind('${n.id}','${key}')">${on?'gebunden':'binden'}</button>
+    </div>`;
+  body.innerHTML =
+    rowFor("svc", n.svc, "??", "Dienst / Implementierung (B1)", "Aufruf/Konnektor wählen") +
+    rowFor("staff", n.staff, "??", "Bearbeiterzuordnung BZR (B2)", "Rolle/Regel zuweisen") +
+    rowFor("data", n.data, "???", "Datenbindung (B3)", "Pflicht-Inputs verbinden") +
+    `<div style="margin-top:12px;font-size:12px;color:var(--txt-dim)">${nodeReady(n)
+      ? '? Aufgabe vollständig – trägt zur Freigabefähigkeit (Stufe B) bei.'
+      : 'Offene Bindung: Struktur bleibt gültig, Freigabe ist gesperrt bis vollständig.'}</div>`;
+}
+function toggleBind(id, key){
+  const n = model.find(x=>x.id===id); if(!n) return;
+  snapshot();
+  n[key] = !n[key];
+  renderModel();
+  selectNode(n);
+}
+
+function publishModel(){
+  if(openCount()>0){ toast("Freigabe gesperrt – offene Bindungen vorhanden"); return; }
+  toast("Entwurf als v4 freigegeben · Stufe A + B erfüllt · sofort instanziierbar");
+}
+
+// ---------------- Toast ----------------
+renderRows();
+renderMig();
+renderModel();
+startLive();
+</script>
+</body>
+</html>

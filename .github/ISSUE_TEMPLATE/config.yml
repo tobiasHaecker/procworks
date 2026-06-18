@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sicherheitslücke melden
+    url: https://github.com/tobiasHaecker/procworks/security/advisories/new
+    about: Schwachstellen bitte vertraulich melden – siehe SECURITY.md, nicht als öffentliches Issue.
+  - name: Frage / Diskussion
+    url: https://github.com/tobiasHaecker/procworks/discussions
+    about: Allgemeine Fragen und Ideen bitte in den Discussions stellen.

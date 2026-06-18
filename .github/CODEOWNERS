@@ -1,0 +1,15 @@
+# Diese Datei legt fest, wer Pull Requests in bestimmten Bereichen reviewen soll.
+# Syntax: https://docs.github.com/articles/about-code-owners
+#
+# Hinweis an die Maintainer: @tobiasHaecker durch den echten
+# GitHub-Handle (z. B. @benutzer) oder ein Team (@org/team) ersetzen.
+
+# Standard-Owner für das gesamte Repository.
+*                       @tobiasHaecker
+
+# Korrektheitskritischer Kern – Reviews besonders sorgfältig.
+/core/                  @tobiasHaecker
+
+# CI/CD und Deployment.
+/.github/               @tobiasHaecker
+/deploy/                @tobiasHaecker

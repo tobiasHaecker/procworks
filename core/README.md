@@ -1,0 +1,472 @@
+# ProcWorks — Headless Process Engine Kernel
+
+Walking Skeleton des Backend-Kerns (Roadmap-Schritte 0–11 mit Activity
+Repository, Daten-Connectoren, BPMN-Import/Export und schlankem Web-Client,
+Abschnitt 13 des Architektur-Konzepts). Demonstriert
+**Correctness by Construction (CbC)**:
+Ein Prozessschema kann ausschließlich über geprüfte High-Level-Operationen
+verändert werden; jede Operation validiert das Ergebnis **vor** dem Commit
+gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
+
+## Umfang dieses Skeletons
+
+- **Meta-Modell** (`model.py`): block-strukturiertes Schema mit Status-Lebenszyklus.
+- **Correctness Validator** (`validator.py`): K1 (balancierte Gateways), K2
+  (genau ein Start/Ende, korrekte Knotengrade), K3 (Erreichbarkeit, keine
+  Sackgassen); Datenfluss D1–D4: D1 (Schreiben-vor-Lesen auf allen
+  Pfaden, Must-Analyse über AND-/XOR-Semantik), D2 (keine konkurrierenden
+  Schreibzugriffe in parallelen AND-Zweigen), D3 (Typkonformität), D4
+  (Datenzugriffe nur auf Aktivitäten, nur auf existierende Elemente); Ressourcen
+  Z1–Z4: Z1 (wohlgeformte BZR + existierende Org-Referenzen), Z2 (Regel ist
+  auflösbar / nicht-leer), Z3 (`NodePerformingAgent`-Rückbezüge sind
+  garantiert-vorher), Z4 (Dienst-/BZR-Konsistenz: automatische Schritte ohne BZR);
+  Activity Repository A1-A3: A1 (gebundene Vorlage existiert), A2 (das
+  `automatic`-Flag passt zum Executor der Vorlage), A3 (typkonforme Bindung der
+  Vorlagen-Schnittstelle: jede Pflicht-Parameter ist gemappt, gemappte Namen
+  gehören zur Vorlage, gemappte Datenelemente existieren und sind typgleich);
+  Komposition H1-H4 (Sub-Prozesse) und F1-F4 (Folgeprozesse): H1 (Ziel ist
+  RELEASED, gepinnte Version), H2 (typkonformes I/O-Mapping), H3 (azyklische
+  Hierarchie), H4 (gepinnte Version immutable), F1 (Zielexistenz/RELEASED), F2
+  (typkonformes Handover-Mapping), F3 (Entkopplung ASYNC), F4 (eine
+  `CONDITIONAL`-Verkettung hat eine wohlgeformte Bedingung, die nur existierende
+  Datenelemente liest). Connectoren C1-C3 (externe Daten): C1 (ein `EXTERNAL`-
+  Datenelement bindet an einen registrierten Connector; ein `INSTANCE`-Element
+  trägt keine Bindung), C2 (der Schlüssel verweist auf ein existierendes
+  `INSTANCE`-Element und nicht auf sich selbst), C3 (die gebundene Entität ist
+  nicht leer). Die schema-
+  übergreifenden Regeln nutzen einen **Resolver**.
+- **Change Operations** (`operations.py`): `serial_insert`, `parallel_insert`
+  (AND-Block), `conditional_insert` (XOR-Block), `add_data_element`,
+  `connect_data` (Lese-/Schreibkante), `add_role`/`add_org_unit`/`add_agent`
+  (Org-Modell), `assign_service`, `assign_staff_rule` (BZR),
+  `add_activity_template` (Activity Repository: wiederverwendbare Vorlage mit
+  typisierter I/O-Schnittstelle + Executor),
+  `register_connector`/`bind_external_data` (externe Daten: Connector
+  registrieren bzw. ein Datenelement als `EXTERNAL` an eine Connector-Entität
+  binden),
+  `insert_subprocess`/`set_subprocess_mapping` (Sub-Prozess),
+  `link_follow_up`/`unlink_follow_up` (Folgeprozess), `new_revision`
+  (neue Schema-Revision für die Migration, behält alle Element-IDs), `release`.
+- **Execution Engine** (`execution.py`): instanziiert ein **freigegebenes**
+  Schema (`instantiate`) und führt es über die ADEPT-Knoten-/Kantenmarkierung
+  aus — Knotenmarkierung NS (`NOT_ACTIVATED`?`ACTIVATED`?`RUNNING`?`COMPLETED`
+  bzw. `SKIPPED`), Kantenmarkierung ES (`TRUE_SIGNALED`/`FALSE_SIGNALED`).
+  Gateways/Start laufen automatisch, Aktivitäten warten auf `start_activity`/
+  `complete_activity`, XOR-Splits auf `decide_branch`; `worklist` liefert die
+  bereiten Schritte. Unter jeder erreichbaren Endmarkierung ist jeder Knoten
+  `COMPLETED` oder `SKIPPED`. Ein `SUBPROCESS`-Knoten erzeugt mit einem
+  `ExecutionContext` (Resolver + Instanz-Store) eine **Kind-Instanz** seines
+  gepinnten Zielschemas, übergibt die gemappten Eingabedaten, bleibt `RUNNING`
+  während das Kind läuft und schreibt bei dessen Abschluss die gemappte Ausgabe
+  in den Elternprozess zurück (ohne Kontext bleibt er eine Blackbox). Schließt
+  eine Instanz ab, startet jeder Folgeprozess-Link, dessen Trigger feuert, eine
+  neue Instanz des Zielprozesses, versorgt mit den per Handover gemappten Daten.
+  Ein `ON_COMPLETE`-Trigger feuert immer, ein `CONDITIONAL`-Trigger nur, wenn
+  seine Bedingung gegen die Instanzdaten wahr ist (ausgewertet durch einen
+  sicheren Ausdrucks-Evaluator, `conditions.py`, ohne `eval`). Die Kopplung
+  bestimmt die Verbindung: `ASYNC` startet eine vollständig entkoppelte
+  Top-Level-Instanz (keine Rückverweisung, F3), `SYNC` startet eine gekoppelte
+  Instanz, die die Ursprungs-Instanz-ID für die Nachverfolgung vermerkt.
+- **Headless API** (`api.py`, FastAPI): einzige Eintrittstür zum Kern; identisch
+  für GUI, CLI und Fremdsysteme (Abschnitt 5.4, API-first). Eine permissive
+  CORS-Middleware erlaubt dem Browser-Client den Zugriff (im lokalen Betrieb
+  unbedenklich, da der Client keine Korrektheitslogik trägt).
+- **Web-Client** (`../web/`): ein schlanker **No-Build**-API-Client (reines
+  HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Sechs
+  Sichten — Modellieren (geführte +-Operationen, live validiert),
+  Datensicht, Ressourcensicht (Organisation als Baumstruktur mit Abteilungen,
+  Vorgesetzten und Umhängen-Dialog; Agenten samt Vertreter in eigener Tabelle),
+  Ausführung (Worklist + Live-Prozesslandkarte), Meine Aufgaben
+  (Bearbeiter-Aufgabenliste) und Monitoring. Jede Änderung läuft über den
+  Validate-before-Commit-Pfad des Kerns; die GUI trifft **keine**
+  Korrektheitsentscheidung (Abschnitt 5.4/8.3).
+- **Persistenz** (`db.py`, `store.py`): austauschbarer Store für Schemata,
+  Instanzen **und** das Event-Log. Ohne Konfiguration in-memory; mit
+  `DATABASE_URL` PostgreSQL (SQLAlchemy 2.0, JSONB-Dokument je Schema bzw.
+  Instanz, eine Zeile je Audit-Event). Schema-, Instanz- und Audit-Tabellen via
+  Alembic (`0001`/`0002`/`0003`). Instanzen und Audit-Verlauf sind damit durabel
+  und überleben einen Neustart.
+- **Ad-hoc-Änderungen** (`adhoc.py`): passen eine **einzelne** laufende Instanz
+  über eine instanzeigene Schema-Variante (`ad_hoc_schema`) an, ohne das
+  freigegebene Schema zu berühren. `adhoc_insert_activity`/`adhoc_delete_node`
+  prüfen R1 (Zustandsverträglichkeit: nur die noch nicht ausgeführte Region
+  darf sich ändern) und R2 (Korrektheitserhalt: die Variante erfüllt weiterhin
+  alle Struktur-/Datenflussregeln, validate-before-commit). Die Execution Engine
+  läuft anschließend nahtlos gegen die Variante weiter (ausgeführte Knoten
+  behalten ihre IDs).
+- **Schema-Evolution + Instanzmigration** (`migration.py`): `check_migration`/
+  `migrate_instance` prüfen, ob eine laufende Instanz auf eine neue Revision
+  umgezogen werden kann — M1 (Ziel ist korrekt + RELEASED), M2 (ausgeführte
+  Region — Knoten und interne Kanten — unverändert), M3 (Markierungen bilden
+  sauber ab: abgeschlossene Knoten behalten ihre Nachfolger, laufende bleiben
+  ausführbar), M4 (Pflichtdaten der ausgeführten Region verfügbar, sonst via
+  `data_mapping` ergänzen), M5 (ad-hoc geänderte Instanzen werden konservativ
+  blockiert — manuelle Auflösung nötig). `build_migration_report` liefert den
+  Befund je Instanz für eine ganze Release-Bestandsaufnahme.
+
+- **Daten-Connectoren** (`dal.py`): ein **Data Access Layer** mit schmaler
+  Connector-SPI (`read`/`write`/`query`) homogenisiert den Zugriff auf externe
+  Systeme (MS SQL, MySQL, Dynamics 365, SAP, plus offene `CUSTOM`-SPI). Ein als
+  `EXTERNAL` markiertes Datenelement wird zur Laufzeit über den gebundenen
+  Connector aufgelöst; Schlüssel und Werte werden stets **parametrisiert**
+  übergeben (kein String-Concat ? kein Injection-Risiko), Zugangsdaten liegen
+  nur serverseitig im Connector, nie im Schema. `InMemoryConnector` ist die
+  Referenz-Implementierung für Tests/Demos.
+
+- **BPMN-Import/Export** (`bpmn.py`): exportiert ein Schema als semantisches
+  **BPMN 2.0**-Dokument (Start/Ende ? Events, Aktivität ? `task`,
+  Sub-Prozess ? `callActivity`, AND ? `parallelGateway`, XOR ?
+  `exclusiveGateway`, Bedingungen als `conditionExpression`) und liest BPMN
+  zurück auf die geprüfte Block-Teilsprache. Der Import folgt dem
+  **No-Bypass-Prinzip**: das gemappte Modell wird vor der Rückgabe gegen die
+  Korrektheitsregeln validiert, ein nicht block-strukturierter BPMN-Graph kann
+  also nie zu einem gespeicherten, inkorrekten Modell werden. Konstrukte
+  außerhalb der Teilsprache (z. B. `inclusiveGateway`) oder Gateways, die weder
+  reiner Split noch reiner Join sind, werden mit `BpmnError` abgelehnt; der
+  Split-/Join-Typ wird über den Knotengrad erschlossen. Es wird die Semantik
+  übertragen, keine Diagramm-/Layout-Information (DI).
+
+- **Monitoring/Audit + Process Mining** (`audit.py`): ein append-only
+  **Event-Log** (`AuditLog`; `InMemoryAuditLog` bzw. durabel `SqlAlchemyAuditLog`)
+  hält die Laufzeithistorie (Instanz erstellt/abgeschlossen, Aktivität
+  gestartet/abgeschlossen, Zweig entschieden, Ad-hoc, Migration). Aufgezeichnet
+  wird **an der API-Grenze**, der Ausführungskern bleibt rein. Aus der Historie
+  werden **KPIs** (`compute_kpis`: laufend/abgeschlossen, Ø Durchlaufzeit, je
+  Aktivität Abschlüsse + Ø Dauer als Engpass-Signal), die **Audit-Timeline**
+  einer Instanz (`instance_timeline`) und eine entdeckte **Prozesskarte**
+  (`discover_process_map`, ein Directly-follows-Graph als leichtes Process
+  Mining) abgeleitet. Mit `DATABASE_URL` landet jedes Event durabel in der
+  Tabelle `audit_event` und überlebt einen Neustart.
+
+- **Deployment** (`Dockerfile`, [`../deploy/`](../deploy/)): der API-Server läuft
+  als schlankes, **zustandsloses** Container-Image (Migrationen beim Start, dann
+  Uvicorn); der Web-Client wird zusammen mit **Caddy** als Reverse Proxy
+  ausgeliefert (TLS via Let's Encrypt, `/api/*` wird an die API
+  weitergereicht). Ein **docker-compose**-Full-Stack
+  ([`../deploy/docker-compose.full.yml`](../deploy/docker-compose.full.yml))
+  und ein **Helm-Chart** ([`../deploy/helm/`](../deploy/helm/)) bringen
+  PostgreSQL + API + Web zusammen; GitHub Actions baut und scannt die Images
+  (Trivy) und veröffentlicht sie bei einem Versions-Tag nach ghcr.io.
+
+## Setup & Tests
+
+```powershell
+# Abhängigkeiten (in das vorhandene .venv des Repos)
+..\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+# Tests
+..\.venv\Scripts\python.exe -m pytest -q
+```
+
+## API starten
+
+```powershell
+$env:PYTHONPATH="src"
+..\.venv\Scripts\python.exe -m uvicorn procworks.api:app --reload
+```
+
+Interaktive Dokumentation (OpenAPI/Swagger) danach unter
+<http://127.0.0.1:8000/docs>.
+
+## Web-Client starten
+
+Der Web-Client unter [`../web/`](../web/) ist ein reiner No-Build-Client und
+braucht keinen Bundler. Bei laufender API gen\u00fcgt ein statischer Server:
+
+```powershell
+# in einem zweiten Terminal, im Repo-Wurzelverzeichnis
+.venv\Scripts\python.exe -m http.server 5500 --directory web
+```
+
+Danach <http://127.0.0.1:5500> \u00f6ffnen. Die API-Basis (Standard
+`http://127.0.0.1:8000`) l\u00e4sst sich unten links anpassen; der Status zeigt
+`verbunden`, sobald `/health` erreichbar ist. Alternativ l\u00e4sst sich
+`web/index.html` direkt \u00f6ffnen (die CORS-Middleware erlaubt den Zugriff).
+
+### Beispiel-Ablauf (headless)
+
+```text
+POST /schemas                      { "name": "Urlaubsantrag" }      -> START->END
+POST /schemas/{id}/serial-insert   { "label": "Antrag prüfen", "after_node_id": "start" }
+POST /schemas/{id}/conditional-insert
+     { "after_node_id": "start",
+       "branches": [ { "condition": "betrag > 1000", "label": "Freigabe Leitung" },
+                     { "condition": "betrag <= 1000", "label": "Freigabe Team" } ] }
+GET  /schemas/{id}/validation       -> { "correct": true, "findings": [] }
+POST /schemas/{id}/release          -> lifecycle_state = RELEASED (immutable)
+```
+
+Datenfluss (D1–D4) wird identisch geprüft:
+
+```text
+POST /schemas/{id}/data-elements    { "name": "betrag", "data_type": "FLOAT", "element_id": "betrag" }
+POST /schemas/{id}/data-access      { "node_id": "<writer>", "element_id": "betrag", "mode": "WRITE" }
+POST /schemas/{id}/data-access      { "node_id": "<reader>", "element_id": "betrag", "mode": "READ" }
+```
+
+Ein Lesezugriff, der nicht auf allen Pfaden zuvor geschrieben wurde (D1), ein
+konkurrierender Schreibzugriff in parallelen AND-Zweigen (D2) oder ein
+Typkonflikt (D3) wird mit **HTTP 422** abgelehnt.
+
+Ressourcen-/Bearbeiterzuordnung (Z1–Z4) folgt demselben Muster:
+
+```text
+POST /schemas/{id}/roles            { "name": "Sachbearbeiter", "role_id": "sb" }
+POST /schemas/{id}/agents           { "name": "Erika", "role_ids": ["sb"], "agent_id": "a1" }
+POST /schemas/{id}/staff-rule       { "node_id": "<act>", "rule": { "kind": "ROLE", "ref": "sb" } }
+POST /schemas/{id}/activity-templates { "name": "Pruefen", "executor": "SERVICE", "inputs": [{ "name": "wert", "data_type": "FLOAT" }], "template_id": "t1" }
+POST /schemas/{id}/service          { "node_id": "<act>", "name": "Pruefen", "template_id": "t1", "parameter_mapping": { "wert": "betrag" } }
+```
+
+Eine Bearbeiterregel (BZR) ist ein strukturierter Ausdrucksbaum
+(`ROLE`/`ORG_UNIT`/`NODE_PERFORMING_AGENT` als Bl\u00e4tter, `AND`/`OR`/`EXCEPT` als
+Verkn\u00fcpfungen). Verweise auf unbekannte Org-Elemente (Z1), nicht aufl\u00f6sbare
+Regeln (Z2) oder Rückbezüge auf nicht garantiert vorher ausgeführte Schritte
+(Z3) werden mit **HTTP 422** abgelehnt. Eine `ORG_UNIT`-Regel kann über
+`recursive: true` die Abteilung samt aller untergeordneten Bereiche adressieren.
+
+Das Organisationsmodell trägt zusätzliche Stammdaten: jede Abteilung kann einen
+Vorgesetzten (`manager_id`) haben, jede Person eine selbst gepflegte
+Vertreterregelung (`deputy_id`, transitiv verfolgt). Beides sind Stammdaten und
+dürfen auch an freigegebenen Schemata gesetzt werden (sie wirken sofort auf
+laufende Instanzen):
+
+```text
+POST /schemas/{id}/org-units                       { "name": "Einkauf", "manager_id": "a1" }
+POST /schemas/{id}/org-units/{org_unit_id}/manager { "manager_id": "a1" }
+POST /schemas/{id}/org-units/{org_unit_id}/parent  { "parent_id": "abt" }
+POST /schemas/{id}/agents/{agent_id}/deputy        { "deputy_id": "a2" }
+```
+
+Ein unbekannter Vorgesetzter, ein unbekannter Vertreter oder ein Selbstverweis
+(Person ist ihr eigener Vertreter) wird über Regel Z1 mit **HTTP 422**
+abgelehnt.
+
+Die Abteilungshierarchie lässt sich nachträglich umbauen: `parent` hängt eine
+Abteilung unter eine andere (oder mit `parent_id: null` auf die oberste Ebene).
+Auch dies ist eine Stammdatenoperation und an freigegebenen Schemata erlaubt.
+Würde ein Umhängen einen Zyklus erzeugen oder eine Abteilung zu ihrem eigenen
+Vorgesetzten machen, lehnt der Kern den Aufruf mit **HTTP 422** (Regel `OP`) ab.
+In der Weboberfläche pflegt die Ressourcensicht die Organisation als
+**Baumstruktur**: Abteilungen samt Vorgesetzten-Markierung erscheinen
+eingerückt, neue Untereinheiten entstehen per „+ Unter“, das Verschieben läuft
+über den „Umhängen“-Dialog (keine Drag-and-drop-Geste). Die Agenten bleiben in
+einer eigenen Tabelle daneben.
+
+Eine Aktivitätenvorlage (Activity Repository) bündelt eine typisierte
+I/O-Schnittstelle und einen Executor (`MANUAL`/`SCRIPT`/`SERVICE`/`WEB_SERVICE`).
+Wird sie an einen Schritt gebunden, prüft der Validator A1 (Vorlage existiert),
+A2 (`automatic`-Flag passt zum Executor — `MANUAL` ist interaktiv) und A3
+(typkonforme Bindung: Pflicht-Parameter gemappt, Namen gehören zur Vorlage,
+Datenelemente existieren und sind typgleich). Verletzungen ? **HTTP 422**.
+
+Externe Daten (Connectoren) werden über denselben CbC-Pfad modelliert: ein
+Connector wird registriert, dann ein Datenelement als `EXTERNAL` an eine
+Connector-Entität gebunden (C1-C3):
+
+```text
+POST /schemas/{id}/connectors                 { "name": "ERP", "kind": "MS_SQL", "connector_id": "erp" }
+POST /schemas/{id}/data-elements              { "name": "kunden_nr", "data_type": "STRING", "element_id": "key" }
+POST /schemas/{id}/data-elements              { "name": "kunde", "data_type": "STRING", "element_id": "kunde" }
+POST /schemas/{id}/data-elements/kunde/external { "connector_id": "erp", "entity": "Kunde", "key_element_id": "key" }
+```
+
+Ein unbekannter Connector (C1), ein fehlender/externer Schlüssel (C2) oder eine
+leere Entität (C3) wird mit **HTTP 422** abgelehnt.
+
+BPMN 2.0 dient als Austauschformat auf der geprüften Block-Teilsprache:
+
+```text
+GET  /schemas/{id}/bpmn             -> application/xml (BPMN 2.0)
+POST /bpmn-import                   { "xml": "<bpmn:definitions ...>", "name": "Importiert" }
+```
+
+Der Export liefert semantisches BPMN (ohne Diagramm-Layout). Der Import wird
+**vor** dem Speichern validiert: fehlerhaftes XML oder ein Konstrukt außerhalb
+der Teilsprache (z. B. `inclusiveGateway`) liefert **HTTP 422**, und ein nicht
+block-strukturierter Graph wird über denselben Korrektheitspfad (K1-K3)
+abgelehnt — der Importweg lässt sich nicht umgehen.
+
+Eine ungültige Operation (z. B. Einfügen nach `end`) wird mit **HTTP 422** und
+lokalisierten `findings` abgelehnt — der Validierungspfad lässt sich nicht
+umgehen.
+
+### Ausf\u00fchrung (Execution Engine)
+
+Ein freigegebenes Schema wird instanziiert und \u00fcber die Worklist abgearbeitet:
+
+```text
+POST /schemas/{id}/instances        -> ProcessInstance (state RUNNING, Markierungen gesetzt)
+GET  /instances/{iid}/worklist      -> { "ready_activities": [...], "pending_decisions": [...] }
+POST /instances/{iid}/complete      { "node_id": "<act>", "data": { "betrag": 1500 } }
+POST /instances/{iid}/decide        { "node_id": "<xor_split>", "target_node_id": "<branch>" }
+```
+
+Parallele AND-Zweige werden gleichzeitig bereit; ein XOR-Split pausiert die
+Instanz, bis ein Zweig gew\u00e4hlt ist (der andere wird `SKIPPED`). Eine
+Laufzeitoperation im falschen Zustand (z. B. Instanziieren eines Entwurfs)
+wird mit **HTTP 409** abgelehnt.
+
+### Bearbeiter-Aufgabenliste (Z-Laufzeitauflösung)
+
+Während die BZR zur Entwurfszeit nur eine Über-Approximation prüft, löst die
+Laufzeit die Bearbeiterregel eines aktiven Schritts konkret auf: `ROLE` und
+`ORG_UNIT` (optional rekursiv über alle Unterbereiche) ergeben die zugehörigen
+Personen, `NODE_PERFORMING_AGENT` bindet an die Person, die einen früheren
+Schritt tatsächlich ausgeführt hat (`instance.performed_by`), und `AND`/`OR`/
+`EXCEPT` verknüpfen Teilmengen. Die Berechtigten werden anschließend um die
+transitive Vertreterkette erweitert.
+
+```text
+GET  /instances/{iid}/tasks         -> [ { node_id, label, eligible_agents: [...] } ]
+GET  /agents/{agent_id}/tasks       -> offene Aufgaben dieser Person (inkl. Vertretung)
+POST /instances/{iid}/complete      { "node_id": "<act>", "agent_id": "a1", "data": {...} }
+```
+
+Eine an eine Abteilung oder Rolle gerichtete Aufgabe erscheint bei allen
+zugehörigen Personen, kann aber von genau einer bearbeitet werden. Wird beim
+Abschluss eine `agent_id` mitgegeben, lehnt der Kern eine nicht berechtigte
+Person mit **HTTP 409** ab und vermerkt sonst den Bearbeiter in
+`performed_by`. Im Web-Client bündelt die Sicht **Meine Aufgaben** diese Liste
+pro angemeldeter Person.
+
+### Komposition (Sub-/Folgeprozesse)
+
+Ein Schema kann ein anderes als **Sub-Prozess** einbetten oder als
+**Folgeprozess** verketten. Beides ist nur gegen ein **freigegebenes** Ziel
+zul\u00e4ssig (typkonformes Mapping, azyklische Hierarchie):
+
+```text
+POST /schemas/{id}/subprocess
+     { "after_node_id": "start", "target_schema_id": "<sub>", "target_version": 1,
+       "input_mapping": { "<sub_input>": "<parent_de>" } }
+POST /schemas/{id}/follow-up
+     { "target_schema_id": "<typ>", "mode": "ASYNC",
+       "handover_mapping": { "<ziel_start_de>": "<quell_de>" } }
+```
+
+Verweist ein Sub-Prozess auf ein nicht freigegebenes Ziel (H1), ist ein
+Mapping nicht typkonform (H2/F2) oder w\u00fcrde die Hierarchie zyklisch (H3), wird
+die Operation mit **HTTP 422** abgelehnt.
+
+### Ad-hoc-\u00c4nderungen einer Instanz (R1/R2)
+
+Eine **einzelne** laufende Instanz l\u00e4sst sich an die Realit\u00e4t anpassen, ohne
+das freigegebene Schema zu \u00e4ndern. Die Instanz erh\u00e4lt eine eigene Variante
+(`ad_hoc_schema`); die Engine l\u00e4uft nahtlos dagegen weiter:
+
+```text
+POST /instances/{id}/adhoc/insert  { "after_node_id": "<knoten>", "label": "Zusatzschritt" }
+POST /instances/{id}/adhoc/delete  { "node_id": "<knoten>" }
+```
+
+Erlaubt ist nur die noch nicht ausgef\u00fchrte Region (R1: ein bereits
+laufender/abgeschlossener/\u00fcbersprungener Knoten ist eingefroren); die
+resultierende Variante wird vor dem Commit voll validiert (R2). Verletzungen
+werden mit **HTTP 422** abgelehnt.
+
+### Schema-Evolution + Instanzmigration (M1\u2013M5)
+
+Eine neue Revision (`POST /schemas/{id}/revision`) beh\u00e4lt alle Element-IDs,
+sodass laufende Instanzen umziehen k\u00f6nnen \u2014 sofern die ausgef\u00fchrte Region
+erhalten bleibt:
+
+```text
+POST /schemas/{id}/revision                { }
+POST /instances/{id}/migration-check       { "target_schema_id": "<rev>" }
+POST /instances/{id}/migrate               { "target_schema_id": "<rev>",
+                                             "data_mapping": { "<de>": "<wert>" } }
+```
+
+`migration-check` liefert `{ migratable, findings }` (M1 Ziel korrekt+RELEASED,
+M2 ausgef\u00fchrte Region unver\u00e4ndert, M3 saubere Markierungsabbildung, M4
+Pflichtdaten verf\u00fcgbar, M5 keine ad-hoc \u00c4nderungen). `migrate` zieht die
+Instanz atomar um (Markierungen werden umgesetzt, neue Knoten starten
+unmarkiert) oder lehnt mit **HTTP 422 + Befund** ab.
+
+### Monitoring/Audit + Process Mining
+
+Jede Laufzeitoperation wird **an der API-Grenze** in ein append-only Event-Log
+geschrieben (der Ausf\u00fchrungskern bleibt rein und kennt das Log nicht). Aus der
+Historie liest die API drei Auswertungen:
+
+```text
+GET  /instances/{iid}/audit              -> Audit-Timeline einer Instanz (chronologisch)
+GET  /audit?schema_id=&instance_id=      -> Roh-Events (optional gefiltert)
+GET  /monitoring/kpis?schema_id=         -> { total_instances, running, completed,
+                                             avg_cycle_seconds, activity_stats: [...] }
+GET  /monitoring/process-map?schema_id=  -> { nodes: [...], edges: [...] }
+```
+
+Erfasste Ereignisse sind `INSTANCE_CREATED`, `ACTIVITY_STARTED`,
+`ACTIVITY_COMPLETED`, `BRANCH_DECIDED`, `ADHOC_INSERTED`, `ADHOC_DELETED`,
+`INSTANCE_MIGRATED`, `INSTANCE_COMPLETED` (je mit Zeitstempel, Knoten/Label und
+ggf. Bearbeiter). `kpis` liefert Durchlaufzeit (Ø) und je Aktivit\u00e4t
+Abschl\u00fcsse + Ø Bearbeitungszeit als Engpass-Signal; `process-map` ist ein aus
+den realen Abl\u00e4ufen entdeckter **Directly-follows-Graph** (leichtes Process
+Mining). Der Web-Client zeigt all das in der Sicht **Monitoring** (KPI-Kacheln,
+Engpass-Tabelle, Prozesskarte) und blendet pro Instanz einen **Audit-Verlauf**
+ein. Ohne `DATABASE_URL` liegt das Log in-memory; mit `DATABASE_URL` wird jedes
+Event durabel in die Tabelle `audit_event` geschrieben (`SqlAlchemyAuditLog`,
+monotone `seq` per Datenbank) und überlebt einen Neustart.
+
+## Persistenz (PostgreSQL)
+
+Ohne `DATABASE_URL` arbeitet der Kern mit einem flüchtigen In-Memory-Store
+(Daten gehen beim Neustart verloren). Für dauerhafte Speicherung PostgreSQL
+verwenden:
+
+```powershell
+# 1. Lokale Datenbank starten (Docker)
+docker compose -f deploy/docker-compose.yml up -d
+
+# 2. Treiber + Migrationswerkzeug installieren
+..\.venv\Scripts\python.exe -m pip install -e ".[postgres]"
+
+# 3. Verbindung setzen (siehe .env.example)
+$env:DATABASE_URL = "postgresql+psycopg://process:process@localhost:5432/procworks"
+
+# 4. Schema- und Instanz-Migration anwenden
+..\.venv\Scripts\python.exe -m alembic upgrade head
+
+# 5. API starten (nutzt jetzt PostgreSQL)
+..\.venv\Scripts\python.exe -m uvicorn procworks.api:app --reload
+```
+
+Der Store-Wechsel ist transparent: Dieselbe API und derselbe Validierungspfad
+gelten für In-Memory wie PostgreSQL. Jedes Schema wird als ein JSONB-Dokument
+je Zeile (`process_schema`) abgelegt, jede laufende Instanz analog
+(`process_instance`), jedes Audit-Event als eigene Zeile (`audit_event`);
+Persistenz fügt der CbC-Garantie nichts hinzu und nimmt ihr nichts — gespeichert
+werden ausschließlich zuvor validierte Modelle bzw. durch die Engine erzeugte
+Instanzzustände.
+
+## Deployment (Container, Reverse Proxy, Helm, CI/CD)
+
+Der gesamte Stack ist quelloffen und containerisiert (Abschnitt 11 des
+Architektur-Konzepts). Der API-Server ist **zustandslos** und horizontal
+skalierbar; der Web-Client wird statisch über **Caddy** ausgeliefert, das
+zugleich als Reverse Proxy mit automatischem TLS dient und `/api/*` an die API
+weiterreicht.
+
+```powershell
+# Voller lokaler Stack (PostgreSQL + API + Web/Caddy), aus dem Repo-Wurzelverzeichnis:
+docker compose -f deploy/docker-compose.full.yml up --build
+# danach http://localhost oeffnen (Web liefert die SPA, /api wird geroutet)
+```
+
+- **Container:** [`Dockerfile`](Dockerfile) (API; Migrationen beim Start via
+  `docker-entrypoint.sh`, dann Uvicorn, non-root, Healthcheck) und
+  [`../web/Dockerfile`](../web/Dockerfile) (Web + Caddy).
+- **Reverse Proxy / TLS:** [`../deploy/Caddyfile`](../deploy/Caddyfile) — für
+  öffentliches HTTPS `SITE_ADDRESS` auf die Domain und `ACME_EMAIL` setzen.
+- **Kubernetes:** Helm-Chart unter [`../deploy/helm/`](../deploy/helm/)
+  (API-/Web-Deployment + Service, optionales Ingress, `DATABASE_URL`-Secret;
+  PostgreSQL wird extern bereitgestellt).
+- **CI/CD:** [`../.github/workflows/release.yml`](../.github/workflows/release.yml)
+  baut beide Images, scannt sie mit **Trivy** und pusht sie bei einem
+  Versions-Tag (`v*`) nach **ghcr.io**.
+
+## Lizenz
+
+Business Source License 1.1 (BUSL-1.1) — siehe [../LICENSE](../LICENSE).
