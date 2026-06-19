@@ -37,6 +37,7 @@ const state = {
   apiBase: localStorage.getItem("apiBase") || defaultApiBase(),
   view: "model",
   schemaIds: [],
+  schemaNames: {},
   schemaId: localStorage.getItem("schemaId") || null,
   schema: null,
   validation: null,
@@ -319,6 +320,16 @@ function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + "\u2026" : s
 
 async function loadSchemas() {
   state.schemaIds = await api.get("/schemas");
+  // The list endpoint returns only IDs; fetch each name once so the picker can
+  // show the human-readable schema name instead of the raw ID (e.g. schema_1).
+  const unknown = state.schemaIds.filter((id) => !(id in state.schemaNames));
+  if (unknown.length) {
+    const entries = await Promise.all(unknown.map(async (id) => {
+      try { const s = await api.get(`/schemas/${id}`); return [id, s.name]; }
+      catch (_e) { return [id, id]; }
+    }));
+    for (const [id, name] of entries) state.schemaNames[id] = name;
+  }
   if (state.schemaIds.length && !state.schemaIds.includes(state.schemaId)) {
     state.schemaId = state.schemaIds[0];
   }
@@ -359,7 +370,7 @@ function renderSchemaPicker() {
   clear(picker);
   const select = el("select", { onChange: (e) => selectSchema(e.target.value) },
     ...state.schemaIds.map((id) => {
-      const o = el("option", { value: id }, id);
+      const o = el("option", { value: id }, state.schemaNames[id] || id);
       if (id === state.schemaId) o.selected = true;
       return o;
     }));
