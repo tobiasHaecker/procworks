@@ -550,6 +550,8 @@ docker compose -f deploy/docker-compose.full.yml up --build
 # danach http://localhost oeffnen (Web liefert die SPA, /api wird geroutet)
 ```
 
+- **Windows Server (Erstinstallation von Grund auf):** Schritt-für-Schritt-
+  Anleitung unter [`../docs/Windows-Server-Setup.md`](../docs/Windows-Server-Setup.md).
 - **Container:** [`Dockerfile`](Dockerfile) (API; Migrationen beim Start via
   `docker-entrypoint.sh`, dann Uvicorn, non-root, Healthcheck) und
   [`../web/Dockerfile`](../web/Dockerfile) (Web + Caddy).
