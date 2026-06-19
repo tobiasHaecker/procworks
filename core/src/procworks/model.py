@@ -232,8 +232,18 @@ class Agent(BaseModel):
 
 
 class OrgModel(BaseModel):
-    """The organisational model a staff rule is resolved against."""
+    """The organisational model a staff rule is resolved against.
 
+    An org model can be **embedded** in a single schema (the default; ``id`` is
+    ``None``) or a **shared**, standalone master-data entity reused across many
+    schemas (``id``/``name`` set, stored in its own registry). A schema that
+    references a shared org model via ``ProcessSchema.org_model_id`` resolves
+    staff rules against that shared model, so one organisation can be modelled
+    once and used in several process models.
+    """
+
+    id: str | None = None
+    name: str = ""
     roles: dict[str, Role] = Field(default_factory=dict)
     org_units: dict[str, OrgUnit] = Field(default_factory=dict)
     agents: dict[str, Agent] = Field(default_factory=dict)
@@ -410,6 +420,11 @@ class ProcessSchema(BaseModel):
     data_accesses: list[DataAccess] = Field(default_factory=list)
     connectors: dict[str, ConnectorDescriptor] = Field(default_factory=dict)
     org_model: OrgModel = Field(default_factory=OrgModel)
+    #: When set, the schema uses a shared, standalone org model (resolved from
+    #: the org registry by this id) instead of its embedded ``org_model``. The
+    #: embedded field is then a hydrated, in-memory cache only -- the shared
+    #: model in the registry is the single source of truth.
+    org_model_id: str | None = None
     staff_rules: dict[str, StaffRule] = Field(default_factory=dict)
     service_bindings: dict[str, ServiceBinding] = Field(default_factory=dict)
     activity_templates: dict[str, ActivityTemplate] = Field(default_factory=dict)

@@ -20,6 +20,7 @@ from procworks import adhoc, assignment, migration
 from procworks import bpmn as bpmn_io
 from procworks import execution as exe
 from procworks import operations as ops
+from procworks import org as org_ops
 from procworks.assignment import OpenTask
 from procworks.audit import (
     AuditEvent,
@@ -41,12 +42,21 @@ from procworks.model import (
     FollowUpMode,
     FollowUpTrigger,
     InstanceState,
+    OrgModel,
     ProcessInstance,
     ProcessSchema,
     StaffRule,
     TemplateParameter,
 )
-from procworks.store import create_instance_store, create_store, make_resolver
+from procworks.store import (
+    create_instance_store,
+    create_org_store,
+    create_store,
+    dehydrate_org,
+    hydrate_org,
+    make_org_resolver,
+    make_resolver,
+)
 from procworks.validator import CorrectnessError, ValidationFinding, validate
 
 app = FastAPI(
@@ -68,7 +78,9 @@ app.add_middleware(
 
 _store = create_store()
 _instances = create_instance_store()
+_org_store = create_org_store()
 _resolver = make_resolver(_store)
+_org_resolver = make_org_resolver(_org_store)
 _context = exe.ExecutionContext(_resolver, _instances)
 _audit = create_audit_log()
 
@@ -192,6 +204,15 @@ class SetDeputyRequest(BaseModel):
     deputy_id: str | None = Field(default=None, examples=["a2"])
 
 
+class CreateOrgModelRequest(BaseModel):
+    name: str = Field(..., examples=["Stadtverwaltung"])
+    org_model_id: str | None = Field(default=None, examples=["org_city"])
+
+
+class LinkOrgModelRequest(BaseModel):
+    org_model_id: str = Field(..., examples=["org_city"])
+
+
 class AssignServiceRequest(BaseModel):
     node_id: str = Field(..., examples=["act_1"])
     name: str = Field(..., examples=["Antrag erfassen"])
@@ -293,6 +314,13 @@ def _get_or_404(schema_id: str) -> ProcessSchema:
     schema = _store.get(schema_id)
     if schema is None:
         raise HTTPException(status_code=404, detail=f"schema '{schema_id}' not found")
+    return hydrate_org(schema, _org_resolver)
+
+
+def _persist_schema(schema: ProcessSchema) -> ProcessSchema:
+    """Store a schema, clearing hydrated shared-org data first (single source)."""
+
+    _store.put(dehydrate_org(schema))
     return schema
 
 
@@ -306,7 +334,58 @@ def _commit_or_422(result_fn: object) -> ProcessSchema:
             status_code=422,
             detail={"findings": [f.model_dump() for f in exc.findings]},
         ) from exc
-    return _store.put(schema)
+    return _persist_schema(schema)
+
+
+def _get_org_or_404(org_id: str) -> OrgModel:
+    org = _org_store.get(org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"org model '{org_id}' not found")
+    return org
+
+
+def _schemas_referencing(org_id: str) -> list[ProcessSchema]:
+    """All stored schemas that resolve their staffing against this shared org."""
+
+    result: list[ProcessSchema] = []
+    for sid in _store.list_ids():
+        schema = _store.get(sid)
+        if schema is not None and schema.org_model_id == org_id:
+            result.append(schema)
+    return result
+
+
+def _commit_org_or_422(result_fn: object) -> OrgModel:
+    """Apply a shared-org change, re-validating every referencing schema.
+
+    The org op is validated for internal consistency (validate-before-commit);
+    additionally each schema that references the org is hydrated with the
+    *candidate* org and re-validated, so an org edit can never silently break a
+    referencing process's staffing. Only if every referencing schema stays
+    correct is the new org persisted (atomic across the org boundary).
+    """
+
+    try:
+        org = result_fn()  # type: ignore[operator]
+    except CorrectnessError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"findings": [f.model_dump() for f in exc.findings]},
+        ) from exc
+    if org.id is not None:
+        breaking: list[ValidationFinding] = []
+        for schema in _schemas_referencing(org.id):
+            hydrated = schema.model_copy(update={"org_model": org.model_copy(deep=True)})
+            breaking += validate(hydrated, _resolver)
+        if breaking:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "org change would break referencing schemas",
+                    "findings": [f.model_dump() for f in breaking],
+                },
+            )
+    return _org_store.put(org)
 
 
 def _get_instance_or_404(instance_id: str) -> ProcessInstance:
@@ -336,7 +415,7 @@ def _effective_schema_for(instance: ProcessInstance) -> ProcessSchema:
     """
 
     base = _get_or_404(instance.schema_id)
-    return adhoc.effective_schema(instance, base)
+    return hydrate_org(adhoc.effective_schema(instance, base), _org_resolver)
 
 
 def _commit_instance_or_422(result_fn: object) -> ProcessInstance:
@@ -480,6 +559,102 @@ def post_import_bpmn(req: ImportBpmnRequest) -> ProcessSchema:
             detail={"findings": [f.model_dump() for f in exc.findings]},
         ) from exc
     return _store.put(schema)
+
+
+# --- shared, cross-schema organisation models ---------------------------
+
+
+@app.get("/org-models", response_model=list[OrgModel])
+def get_org_models() -> list[OrgModel]:
+    return [org for oid in _org_store.list_ids() if (org := _org_store.get(oid)) is not None]
+
+
+@app.post("/org-models", response_model=OrgModel, status_code=201)
+def post_create_org_model(req: CreateOrgModelRequest) -> OrgModel:
+    org = org_ops.create_org_model(req.name, org_id=req.org_model_id)
+    return _org_store.put(org)
+
+
+@app.get("/org-models/{org_id}", response_model=OrgModel)
+def get_org_model(org_id: str) -> OrgModel:
+    return _get_org_or_404(org_id)
+
+
+@app.post("/org-models/{org_id}/roles", response_model=OrgModel)
+def post_org_add_role(org_id: str, req: AddRoleRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    return _commit_org_or_422(lambda: org_ops.org_add_role(org, req.name, role_id=req.role_id))
+
+
+@app.post("/org-models/{org_id}/org-units", response_model=OrgModel)
+def post_org_add_unit(org_id: str, req: AddOrgUnitRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    return _commit_org_or_422(
+        lambda: org_ops.org_add_unit(
+            org,
+            req.name,
+            parent_id=req.parent_id,
+            org_unit_id=req.org_unit_id,
+            manager_id=req.manager_id,
+        )
+    )
+
+
+@app.post("/org-models/{org_id}/org-units/{org_unit_id}/manager", response_model=OrgModel)
+def post_org_set_manager(org_id: str, org_unit_id: str, req: SetManagerRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    return _commit_org_or_422(lambda: org_ops.org_set_manager(org, org_unit_id, req.manager_id))
+
+
+@app.post("/org-models/{org_id}/org-units/{org_unit_id}/parent", response_model=OrgModel)
+def post_org_set_parent(org_id: str, org_unit_id: str, req: SetParentRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    return _commit_org_or_422(lambda: org_ops.org_set_parent(org, org_unit_id, req.parent_id))
+
+
+@app.post("/org-models/{org_id}/agents", response_model=OrgModel)
+def post_org_add_agent(org_id: str, req: AddAgentRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    return _commit_org_or_422(
+        lambda: org_ops.org_add_agent(
+            org,
+            req.name,
+            role_ids=req.role_ids,
+            org_unit_id=req.org_unit_id,
+            agent_id=req.agent_id,
+            deputy_id=req.deputy_id,
+        )
+    )
+
+
+@app.patch("/org-models/{org_id}/agents/{agent_id}", response_model=OrgModel)
+def patch_org_update_agent(org_id: str, agent_id: str, req: UpdateAgentRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    org_unit = req.org_unit_id if "org_unit_id" in req.model_fields_set else org_ops.KEEP
+    return _commit_org_or_422(
+        lambda: org_ops.org_update_agent(
+            org, agent_id, name=req.name, role_ids=req.role_ids, org_unit_id=org_unit
+        )
+    )
+
+
+@app.post("/org-models/{org_id}/agents/{agent_id}/deputy", response_model=OrgModel)
+def post_org_set_deputy(org_id: str, agent_id: str, req: SetDeputyRequest) -> OrgModel:
+    org = _get_org_or_404(org_id)
+    return _commit_org_or_422(lambda: org_ops.org_set_deputy(org, agent_id, req.deputy_id))
+
+
+@app.post("/schemas/{schema_id}/org-model", response_model=ProcessSchema)
+def post_link_org_model(schema_id: str, req: LinkOrgModelRequest) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    org = _get_org_or_404(req.org_model_id)
+    return _commit_or_422(lambda: ops.link_org_model(schema, req.org_model_id, org))
+
+
+@app.delete("/schemas/{schema_id}/org-model", response_model=ProcessSchema)
+def delete_unlink_org_model(schema_id: str) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(lambda: ops.unlink_org_model(schema))
 
 
 @app.post("/schemas/{schema_id}/roles", response_model=ProcessSchema)

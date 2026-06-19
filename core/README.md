@@ -45,8 +45,15 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   registrieren bzw. ein Datenelement als `EXTERNAL` an eine Connector-Entität
   binden),
   `insert_subprocess`/`set_subprocess_mapping` (Sub-Prozess),
-  `link_follow_up`/`unlink_follow_up` (Folgeprozess), `new_revision`
+  `link_follow_up`/`unlink_follow_up` (Folgeprozess),
+  `link_org_model`/`unlink_org_model` (geteilte Organisation verknüpfen/lösen),
+  `new_revision`
   (neue Schema-Revision für die Migration, behält alle Element-IDs), `release`.
+- **Shared Org** (`org.py` + `store.py`): geteilte, modellübergreifende
+  Organisationsmodelle als eigenständige Stammdaten-Entität mit eigenen
+  Operationen (`create_org_model`, `org_add_*`, `org_set_*`, `org_update_agent`)
+  und Validierung (`validate_org`); per **Hydration** an der API-Grenze in
+  referenzierende Schemata eingespielt.
 - **Execution Engine** (`execution.py`): instanziiert ein **freigegebenes**
   Schema (`instantiate`) und führt es über die ADEPT-Knoten-/Kantenmarkierung
   aus — Knotenmarkierung NS (`NOT_ACTIVATED`?`ACTIVATED`?`RUNNING`?`COMPLETED`
@@ -81,10 +88,12 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   Validate-before-Commit-Pfad des Kerns; die GUI trifft **keine**
   Korrektheitsentscheidung (Abschnitt 5.4/8.3).
 - **Persistenz** (`db.py`, `store.py`): austauschbarer Store für Schemata,
-  Instanzen **und** das Event-Log. Ohne Konfiguration in-memory; mit
+  Instanzen, das Event-Log **und** geteilte Organisationsmodelle. Ohne
+  Konfiguration in-memory; mit
   `DATABASE_URL` PostgreSQL (SQLAlchemy 2.0, JSONB-Dokument je Schema bzw.
-  Instanz, eine Zeile je Audit-Event). Schema-, Instanz- und Audit-Tabellen via
-  Alembic (`0001`/`0002`/`0003`). Instanzen und Audit-Verlauf sind damit durabel
+  Instanz, eine Zeile je Audit-Event, eine Zeile je geteilter Organisation).
+  Schema-, Instanz-, Audit- und Org-Tabellen via
+  Alembic (`0001`/`0002`/`0003`/`0004`). Instanzen und Audit-Verlauf sind damit durabel
   und überleben einen Neustart.
 - **Ad-hoc-Änderungen** (`adhoc.py`): passen eine **einzelne** laufende Instanz
   über eine instanzeigene Schema-Variante (`ad_hoc_schema`) an, ohne das
@@ -252,6 +261,34 @@ In der Weboberfläche pflegt die Ressourcensicht die Organisation als
 eingerückt, neue Untereinheiten entstehen per „+ Unter“, das Verschieben läuft
 über den „Umhängen“-Dialog (keine Drag-and-drop-Geste). Die Agenten bleiben in
 einer eigenen Tabelle daneben.
+
+Eine Organisation kann **modellübergreifend geteilt** werden: Statt sie in jedem
+Schema einzeln zu pflegen, wird sie einmal als eigenständige Stammdaten-Entität
+angelegt und von mehreren Schemata referenziert (`ProcessSchema.org_model_id`).
+Änderungen an der geteilten Organisation wirken **live** in allen verknüpften
+Modellen und deren laufenden Instanzen. Die geteilte Organisation ist die
+alleinige Quelle der Wahrheit; ein verknüpftes Schema speichert nur die
+`org_model_id` und wird beim Laden an der API-Grenze mit dem aktuellen Stand
+*hydriert* (so bleiben Validator, Bearbeiterauflösung und Ausführung
+unverändert). Jede Org-Änderung wird gegen **alle** referenzierenden Schemata
+revalidiert – würde sie eine dort aktive BZR leerlaufen lassen (Z2), wird sie
+atomar mit **HTTP 422** abgelehnt (Correctness by Construction über die
+Modellgrenze):
+
+```text
+POST   /org-models                                 { "name": "Stadtverwaltung", "org_model_id": "org1" }
+POST   /org-models/{org_id}/roles                  { "name": "Sachbearbeiter", "role_id": "sb" }
+POST   /org-models/{org_id}/agents                 { "name": "Erika", "role_ids": ["sb"], "agent_id": "a1" }
+POST   /schemas/{id}/org-model                     { "org_model_id": "org1" }   # verknüpfen (nur ENTWURF)
+DELETE /schemas/{id}/org-model                                                   # lösen (lokale Kopie bleibt)
+```
+
+Die Org-Pflege-Endpunkte unter `/org-models/{org_id}/...` spiegeln die
+schemabezogenen Org-Endpunkte (Rollen, Abteilungen, Manager, Parent, Agenten,
+Vertreter). Bei einem verknüpften Schema sind die schemabezogenen Org-Operationen
+gesperrt (Regel `OP`, **HTTP 422**) – die Organisation wird ausschließlich zentral
+gepflegt. Im Web-Client bietet die Ressourcensicht dafür „Geteilte Organisation…“
+zum Anlegen, Auswählen, Verknüpfen und Lösen.
 
 Eine Aktivitätenvorlage (Activity Repository) bündelt eine typisierte
 I/O-Schnittstelle und einen Executor (`MANUAL`/`SCRIPT`/`SERVICE`/`WEB_SERVICE`).

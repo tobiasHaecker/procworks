@@ -422,6 +422,32 @@ Die Korrektheitskriterien für Komposition (H1–H4, F1–F3) sind in Abschnitt 
 
 ---
 
+### 4.3 Geteilte Organisationsmodelle (modellübergreifend)
+
+Das Organisationsmodell (`Role`, `OrgUnit`, `Agent` mit Vorgesetzten, Vertretern und Hierarchie) kann **zwei Ausprägungen** haben:
+
+- **Eingebettet (lokal):** Das Org-Modell gehört genau einem Schema (Default; `ProcessSchema.org_model_id = null`). So war das System bisher – Rollen, Abteilungen und Agenten werden direkt im jeweiligen Schema gepflegt.
+- **Geteilt (zentral, modellübergreifend):** Eine Organisation wird **einmal** als eigenständige Stammdaten-Entität modelliert und von **beliebig vielen** Schemata referenziert (`ProcessSchema.org_model_id` zeigt auf die geteilte Organisation in einer eigenen Registry). So lässt sich dieselbe Aufbauorganisation in mehreren Prozessmodellen wiederverwenden.
+
+> **Leitidee „einmal pflegen, überall wirksam":** Eine geteilte Organisation ist die **alleinige Quelle der Wahrheit**. Änderungen daran (neuer Agent, geänderte Rolle, Umhängen einer Abteilung, neuer Vertreter) wirken **sofort live** in allen verknüpften Modellen – und damit auch in deren bereits laufenden Instanzen, deren Bearbeiterauflösung (Z2/Z3 zur Laufzeit) gegen den aktuellen Stand erfolgt.
+
+```mermaid
+flowchart LR
+    ORG["Geteilte Organisation<br/>(Stammdaten-Registry)"]
+    S1["Schema A<br/>org_model_id ?"] -. referenziert .-> ORG
+    S2["Schema B<br/>org_model_id ?"] -. referenziert .-> ORG
+    S3["Schema C<br/>org_model_id ?"] -. referenziert .-> ORG
+    ORG -. wirkt live auf .-> I["laufende Instanzen<br/>von A/B/C"]
+```
+
+**Hydration als Architekturprinzip (geringe Invasivität).** Damit Validator, Bearbeiterauflösung und Ausführungs-Engine **unverändert** bleiben, wird die geteilte Organisation an der **API-Grenze** in das Schema *hydriert*: Beim Laden eines verknüpften Schemas wird sein `org_model` aus der Registry gefüllt, vor dem Speichern wieder geleert (nur `org_model_id` wird persistiert). Alle Korrektheitsregeln (Z1–Z4) lesen weiterhin `schema.org_model` und sehen so stets den geteilten Stand – die geteilte Organisation bleibt die einzige persistierte Wahrheit.
+
+**Correctness by Construction über die Modellgrenze.** Eine Änderung an einer geteilten Organisation könnte ein **anderes**, referenzierendes Schema brechen (z. B. würde das Entfernen der letzten Trägerrolle eine dort aktive BZR leerlaufen lassen, Z2). Deshalb wird **jede** Org-Änderung gegen **alle** referenzierenden Schemata revalidiert: nur wenn jedes davon korrekt bleibt, wird die Änderung übernommen – andernfalls wird sie atomar abgelehnt (HTTP 422). Damit gilt die Korrektheitsinvariante auch hier konstruktiv: Eine geteilte Organisation kann nie in einen Zustand geraten, der ein verknüpftes Modell inkonsistent macht.
+
+**Verknüpfen/Lösen.** Das Verknüpfen (`linkOrgModel`) und Lösen (`unlinkOrgModel`) eines Schemas ist – wie strukturelle Bindungsänderungen – nur im Status **ENTWURF** zulässig (R0). Beim Verknüpfen muss jede vorhandene BZR weiterhin gegen die geteilte Organisation auflösbar sein (Z1–Z4); beim Lösen wird der zuletzt sichtbare Org-Stand als lokale Kopie ins Schema übernommen, sodass bestehende BZR weiter auflösbar bleiben. Die Pflege der Org-Stammdaten selbst (Rollen/Abteilungen/Agenten, Vorgesetzte/Vertreter/Hierarchie) erfolgt bei verknüpften Schemata ausschließlich über die geteilte Organisation, nicht in-place im Schema.
+
+---
+
 ## 5. Systemarchitektur
 
 ### 5.1 Schichtenüberblick
@@ -682,6 +708,9 @@ operation op(model M, params P):
 | `unassignStaffRule(node)` | – | BZR entfernt; B2 für `node` offen |
 | `setStartAuthorization(schema, bzr)` | `bzr` gültig & auflösbar (Z1/Z2) | Startberechtigung definiert (Beitrag zu B2) |
 | `editOrgModel(op)` (Org-Element ändern/entfernen) | keine **aktiv referenzierende** BZR würde dadurch leer (Z2) | OrgModell konsistent; alle BZR bleiben auflösbar |
+| `linkOrgModel(schema, orgId)` (geteilte Org verknüpfen) | `schema` in ENTWURF (R0); geteilte Org existiert; alle BZR bleiben gegen die geteilte Org auflösbar (Z1–Z4) | `schema.org_model_id` gesetzt; Org wird modellübergreifend live referenziert |
+| `unlinkOrgModel(schema)` (Verknüpfung lösen) | `schema` in ENTWURF (R0) | Verknüpfung gelöst; zuletzt sichtbarer Org-Stand als lokale Kopie übernommen; BZR weiter auflösbar |
+| `editSharedOrgModel(orgId, op)` (geteilte Org pflegen) | Org bleibt intern konsistent (Z1-Stammdaten, azyklische Hierarchie); **jedes** referenzierende Schema bleibt nach der Änderung korrekt (Z1–Z4, modellübergreifend revalidiert) | geteilte Org konsistent; Änderung wirkt live in allen verknüpften Modellen und Instanzen |
 
 ### 7.5 Ad-hoc-Operationen (Laufzeit) – zusätzliche Vorbedingungen
 

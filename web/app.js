@@ -662,13 +662,19 @@ function viewOrg() {
   if (!state.schema) { content.appendChild(emptyState("Kein Schema ausgewaehlt.")); return; }
   const schema = state.schema;
   const draft = isDraft(schema);
+  const linked = !!schema.org_model_id;
+  // A shared organisation is editable independently of this schema's lifecycle
+  // (it is master data used across models); a local org follows the draft gate.
+  const orgEditable = draft || linked;
   const org = schema.org_model || { roles: {}, org_units: {}, agents: {} };
 
-  const roleRows = Object.values(org.roles || {}).map((r) => [r.name, r.id]);
-  const rolePanel = listPanel("Rollen", ["Name", "ID"], roleRows, draft ? () => addRole() : null, "+ Rolle");
+  const orgPanel = sharedOrgBanner(schema, draft);
 
-  const unitPanel = orgUnitPanel(org, draft);
-  const agentPanel = agentListPanel(org, draft);
+  const roleRows = Object.values(org.roles || {}).map((r) => [r.name, r.id]);
+  const rolePanel = listPanel("Rollen", ["Name", "ID"], roleRows, orgEditable ? () => addRole() : null, "+ Rolle");
+
+  const unitPanel = orgUnitPanel(org, orgEditable);
+  const agentPanel = agentListPanel(org, orgEditable);
 
   // BZR-Zuordnung
   const ruleRows = Object.entries(schema.staff_rules || {}).map(([nid, rule]) => {
@@ -683,8 +689,72 @@ function viewOrg() {
     el("div", { class: "panel-b" }, ruleTable));
 
   content.appendChild(el("div", { class: "grid-2" },
-    el("div", null, rolePanel, unitPanel, agentPanel),
+    el("div", null, orgPanel, rolePanel, unitPanel, agentPanel),
     el("div", null, rulePanel, zFindingsPanel())));
+}
+
+// Endpoint base for org-entity edits: the shared org registry when the schema
+// is linked, otherwise the schema's embedded org. The same path suffixes
+// (/roles, /org-units, /agents, ...) exist under both bases.
+function orgApi(suffix) {
+  const oid = state.schema && state.schema.org_model_id;
+  return oid ? `/org-models/${oid}${suffix}` : `/schemas/${state.schemaId}${suffix}`;
+}
+
+function sharedOrgBanner(schema, draft) {
+  const linked = !!schema.org_model_id;
+  const head = el("div", { class: "panel-h" }, el("h2", null, "Organisation"),
+    el("span", { class: "sub" }, linked ? "geteilt (modell\u00FCbergreifend)" : "lokal in diesem Modell"),
+    el("span", { class: "spacer", style: "flex:1" }),
+    el("button", { class: "btn small", onClick: manageSharedOrg }, linked ? "Verwalten" : "Geteilte Organisation\u2026"));
+  const body = el("div", { class: "panel-b" }, el("div", { class: "sub" }, linked
+    ? "Diese Organisation wird zentral gepflegt; \u00C4nderungen wirken sofort in allen verkn\u00FCpften Modellen."
+    : "Die Organisation geh\u00F6rt nur zu diesem Modell. Verkn\u00FCpfe sie, um dieselbe Organisation in mehreren Modellen zu verwenden."));
+  return el("div", { class: "panel" }, head, body);
+}
+
+async function manageSharedOrg() {
+  const schema = state.schema;
+  const draft = isDraft(schema);
+  let orgs = [];
+  try { orgs = await api.get("/org-models"); } catch (err) { orgs = []; }
+
+  if (schema.org_model_id) {
+    const cur = orgs.find((o) => o.id === schema.org_model_id);
+    const body = el("div", null,
+      el("div", { class: "field" }, "Verkn\u00FCpft mit geteilter Organisation: ",
+        el("strong", null, cur ? cur.name : schema.org_model_id)),
+      el("p", { class: "sub", style: "margin-top:10px" }, draft
+        ? "Beim L\u00F6sen wird die aktuelle Organisation als lokale Kopie ins Modell \u00FCbernommen."
+        : "Zum L\u00F6sen der Verkn\u00FCpfung muss das Schema im Entwurf sein."));
+    openModal("Geteilte Organisation", body, draft ? async () => {
+      try { await api.del(`/schemas/${state.schemaId}/org-model`); await refreshSchema(); render(); toast("ok", "Verkn\u00FCpfung gel\u00F6st"); }
+      catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+    } : null, draft ? "Verkn\u00FCpfung l\u00F6sen" : "Schliessen");
+    return;
+  }
+
+  const sel = el("select", null, el("option", { value: "" }, "\u2013 vorhandene w\u00E4hlen \u2013"),
+    ...orgs.map((o) => el("option", { value: o.id }, o.name)));
+  const newName = el("input", { type: "text", placeholder: "z. B. Stadtverwaltung" });
+  const body = el("div", null,
+    el("label", { class: "field" }, "Vorhandene Organisation", sel),
+    el("div", { class: "sub", style: "margin:10px 0" }, "\u2013 oder neue anlegen \u2013"),
+    el("label", { class: "field" }, "Name", newName),
+    draft ? null : el("p", { class: "sub", style: "margin-top:10px" }, "Verkn\u00FCpfen ist nur im Entwurf m\u00F6glich."));
+  openModal("Geteilte Organisation verkn\u00FCpfen", body, async () => {
+    if (!draft) { toast("err", "Nur im Entwurf m\u00F6glich"); return false; }
+    try {
+      let orgId = sel.value;
+      if (!orgId) {
+        if (!newName.value.trim()) return false;
+        const created = await api.post("/org-models", { name: newName.value.trim() });
+        orgId = created.id;
+      }
+      await api.post(`/schemas/${state.schemaId}/org-model`, { org_model_id: orgId });
+      await refreshSchema(); render(); toast("ok", "Mit geteilter Organisation verkn\u00FCpft");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Verkn\u00FCpfen");
 }
 
 function orgUnitPanel(org, draft) {
@@ -776,7 +846,7 @@ function addRole() {
   const name = el("input", { type: "text", placeholder: "z. B. Sachbearbeiter" });
   openModal("Rolle", el("label", { class: "field" }, "Name", name), async () => {
     if (!name.value.trim()) return false;
-    try { await api.post(`/schemas/${state.schemaId}/roles`, { name: name.value.trim() }); await refreshSchema(); render(); toast("ok", "Rolle angelegt"); }
+    try { await api.post(orgApi(`/roles`), { name: name.value.trim() }); await refreshSchema(); render(); toast("ok", "Rolle angelegt"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Anlegen");
 }
@@ -800,7 +870,7 @@ function addAgent() {
     const payload = { name: name.value.trim(), role_ids: roleIds };
     if (unitSel.value) payload.org_unit_id = unitSel.value;
     if (depSel.value) payload.deputy_id = depSel.value;
-    try { await api.post(`/schemas/${state.schemaId}/agents`, payload); await refreshSchema(); render(); toast("ok", "Agent angelegt"); }
+    try { await api.post(orgApi(`/agents`), payload); await refreshSchema(); render(); toast("ok", "Agent angelegt"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Anlegen");
 }
@@ -820,7 +890,7 @@ function addChildOrgUnit(parentId) {
     const payload = { name: name.value.trim() };
     if (parentId) payload.parent_id = parentId;
     if (mgrSel.value) payload.manager_id = mgrSel.value;
-    try { await api.post(`/schemas/${state.schemaId}/org-units`, payload); await refreshSchema(); render(); toast("ok", "Abteilung angelegt"); }
+    try { await api.post(orgApi(`/org-units`), payload); await refreshSchema(); render(); toast("ok", "Abteilung angelegt"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Anlegen");
 }
@@ -840,7 +910,7 @@ function moveOrgUnit(unit) {
     ...Object.values(org.org_units).filter((u) => !blocked.has(u.id)).map((u) => el("option", { value: u.id }, u.name)));
   if (unit.parent_id) sel.value = unit.parent_id;
   openModal(`Umh\u00E4ngen: ${unit.name}`, el("label", { class: "field" }, "\u00DCbergeordnete Abteilung", sel), async () => {
-    try { await api.post(`/schemas/${state.schemaId}/org-units/${unit.id}/parent`, { parent_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Abteilung umgeh\u00E4ngt"); }
+    try { await api.post(orgApi(`/org-units/${unit.id}/parent`), { parent_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Abteilung umgeh\u00E4ngt"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Speichern");
 }
@@ -851,7 +921,7 @@ function editManager(unit) {
     ...Object.values(org.agents || {}).map((a) => el("option", { value: a.id }, a.name)));
   if (unit.manager_id) sel.value = unit.manager_id;
   openModal(`Vorgesetzter: ${unit.name}`, el("label", { class: "field" }, "Vorgesetzter", sel), async () => {
-    try { await api.post(`/schemas/${state.schemaId}/org-units/${unit.id}/manager`, { manager_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Vorgesetzter gesetzt"); }
+    try { await api.post(orgApi(`/org-units/${unit.id}/manager`), { manager_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Vorgesetzter gesetzt"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Speichern");
 }
@@ -875,7 +945,7 @@ function editAgent(agent) {
     if (!name.value.trim()) return false;
     const roleIds = [...roleSel.selectedOptions].map((o) => o.value);
     const payload = { name: name.value.trim(), role_ids: roleIds, org_unit_id: unitSel.value || null };
-    try { await api.patch(`/schemas/${state.schemaId}/agents/${agent.id}`, payload); await refreshSchema(); render(); toast("ok", "Agent gespeichert"); }
+    try { await api.patch(orgApi(`/agents/${agent.id}`), payload); await refreshSchema(); render(); toast("ok", "Agent gespeichert"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Speichern");
 }
@@ -886,7 +956,7 @@ function editDeputy(agent) {
     ...Object.values(org.agents || {}).filter((a) => a.id !== agent.id).map((a) => el("option", { value: a.id }, a.name)));
   if (agent.deputy_id) sel.value = agent.deputy_id;
   openModal(`Vertreter: ${agent.name}`, el("label", { class: "field" }, "Vertreter", sel), async () => {
-    try { await api.post(`/schemas/${state.schemaId}/agents/${agent.id}/deputy`, { deputy_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Vertreter gesetzt"); }
+    try { await api.post(orgApi(`/agents/${agent.id}/deputy`), { deputy_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Vertreter gesetzt"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Speichern");
 }

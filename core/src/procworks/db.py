@@ -31,7 +31,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from procworks.audit import AuditEvent, EventType
-from procworks.model import ProcessInstance, ProcessSchema
+from procworks.model import OrgModel, ProcessInstance, ProcessSchema
 
 #: JSONB on PostgreSQL, generic JSON elsewhere (e.g. SQLite in tests).
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
@@ -97,6 +97,55 @@ class SqlAlchemySchemaStore:
     def list_ids(self) -> list[str]:
         with Session(self._engine) as session:
             return list(session.scalars(select(SchemaRow.id)))
+
+
+class OrgRow(Base):
+    """One row per shared, standalone org model (keyed by org id)."""
+
+    __tablename__ = "org_model"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    document: Mapped[dict[str, object]] = mapped_column(JsonDocument, nullable=False)
+
+
+class SqlAlchemyOrgStore:
+    """A shared-org-model store backed by a SQLAlchemy engine.
+
+    Mirrors ``SqlAlchemySchemaStore``: same engine/URL conventions and the same
+    ``put``/``get``/``list_ids`` interface as the in-memory org store, so the
+    API is agnostic of the backend.
+    """
+
+    def __init__(self, url: str, *, create_tables: bool = False) -> None:
+        self._engine = create_engine(url, future=True)
+        if create_tables:
+            Base.metadata.create_all(self._engine)
+
+    def put(self, org: OrgModel) -> OrgModel:
+        if org.id is None:
+            raise ValueError("a shared org model must have an id before it is stored")
+        payload = org.model_dump(mode="json")
+        with Session(self._engine) as session:
+            row = session.get(OrgRow, org.id)
+            if row is None:
+                row = OrgRow(id=org.id)
+                session.add(row)
+            row.name = org.name
+            row.document = payload
+            session.commit()
+        return org
+
+    def get(self, org_id: str) -> OrgModel | None:
+        with Session(self._engine) as session:
+            row = session.get(OrgRow, org_id)
+            if row is None:
+                return None
+            return OrgModel.model_validate(row.document)
+
+    def list_ids(self) -> list[str]:
+        with Session(self._engine) as session:
+            return list(session.scalars(select(OrgRow.id)))
 
 
 class InstanceRow(Base):

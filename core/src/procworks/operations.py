@@ -33,6 +33,7 @@ from procworks.model import (
     LifecycleState,
     Node,
     NodeType,
+    OrgModel,
     OrgUnit,
     ProcessSchema,
     Role,
@@ -77,6 +78,28 @@ def _require_editable(schema: ProcessSchema) -> None:
                     rule="R0",
                     message=(
                         f"schema is {schema.lifecycle_state.value}; only ENTWURF is editable"
+                    ),
+                )
+            ]
+        )
+
+
+def _require_local_org(schema: ProcessSchema) -> None:
+    """Reject editing the embedded org model when a shared one is linked.
+
+    A schema that references a shared org model (``org_model_id`` set) must not
+    have its (hydrated) org master data edited in place; the shared model is
+    the single source of truth and is edited via the org operations / endpoints.
+    """
+
+    if schema.org_model_id is not None:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    message=(
+                        "schema uses a shared organisation; edit it via the shared "
+                        "org model instead"
                     ),
                 )
             ]
@@ -348,6 +371,7 @@ def add_role(schema: ProcessSchema, name: str, role_id: str | None = None) -> Pr
 
     candidate = schema.model_copy(deep=True)
     _require_editable(candidate)
+    _require_local_org(candidate)
     rid = role_id or _new_id("role")
     if rid in candidate.org_model.roles:
         raise CorrectnessError(
@@ -372,6 +396,7 @@ def add_org_unit(
 
     candidate = schema.model_copy(deep=True)
     _require_editable(candidate)
+    _require_local_org(candidate)
     uid = org_unit_id or _new_id("unit")
     if uid in candidate.org_model.org_units:
         raise CorrectnessError(
@@ -403,6 +428,7 @@ def add_agent(
 
     candidate = schema.model_copy(deep=True)
     _require_editable(candidate)
+    _require_local_org(candidate)
     aid = agent_id or _new_id("agent")
     if aid in candidate.org_model.agents:
         raise CorrectnessError(
@@ -435,6 +461,7 @@ def set_org_unit_manager(
     """
 
     candidate = schema.model_copy(deep=True)
+    _require_local_org(candidate)
     unit = candidate.org_model.org_units.get(org_unit_id)
     if unit is None:
         raise CorrectnessError(
@@ -457,6 +484,7 @@ def set_org_unit_parent(
     """
 
     candidate = schema.model_copy(deep=True)
+    _require_local_org(candidate)
     units = candidate.org_model.org_units
     unit = units.get(org_unit_id)
     if unit is None:
@@ -507,12 +535,48 @@ def set_agent_deputy(
     """
 
     candidate = schema.model_copy(deep=True)
+    _require_local_org(candidate)
     agent = candidate.org_model.agents.get(agent_id)
     if agent is None:
         raise CorrectnessError(
             [ValidationFinding(rule="OP", message=f"agent '{agent_id}' does not exist")]
         )
     agent.deputy_id = deputy_id
+    return raise_if_invalid(candidate)
+
+
+def link_org_model(schema: ProcessSchema, org_model_id: str, org: OrgModel) -> ProcessSchema:
+    """Link a schema to a shared org model (its master data becomes ``org``).
+
+    The shared model *org* is hydrated into the schema's embedded ``org_model``
+    so the result can be validated (validate-before-commit); any previously
+    embedded local org master data is replaced. Linking is a structural change
+    to how staffing is resolved, so the schema must be in ENTWURF (R0). The
+    referenced staff rules must still resolve against the shared model, else
+    the result is rejected (Z1-Z4).
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    candidate.org_model_id = org_model_id
+    candidate.org_model = org.model_copy(deep=True)
+    return raise_if_invalid(candidate)
+
+
+def unlink_org_model(schema: ProcessSchema) -> ProcessSchema:
+    """Detach a schema from its shared org model, keeping a local copy.
+
+    The currently hydrated org master data is retained as the schema's own
+    embedded ``org_model`` so existing staff rules keep resolving; afterwards
+    the org can be edited locally again. Requires ENTWURF (R0).
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    candidate.org_model_id = None
+    candidate.org_model = candidate.org_model.model_copy(
+        deep=True, update={"id": None, "name": ""}
+    )
     return raise_if_invalid(candidate)
 
 
@@ -545,6 +609,7 @@ def update_agent(
 
     candidate = schema.model_copy(deep=True)
     _require_editable(candidate)
+    _require_local_org(candidate)
     agent = candidate.org_model.agents.get(agent_id)
     if agent is None:
         raise CorrectnessError(

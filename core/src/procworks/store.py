@@ -11,7 +11,7 @@ import os
 from collections.abc import Callable
 from typing import Protocol
 
-from procworks.model import ProcessInstance, ProcessSchema
+from procworks.model import OrgModel, ProcessInstance, ProcessSchema
 
 
 class SchemaStore(Protocol):
@@ -127,3 +127,88 @@ def create_instance_store() -> InstanceStore:
 
         return SqlAlchemyInstanceStore(url, create_tables=True)
     return InMemoryInstanceStore()
+
+
+class OrgStore(Protocol):
+    """Minimal persistence interface for shared, standalone org models."""
+
+    def put(self, org: OrgModel) -> OrgModel: ...
+
+    def get(self, org_id: str) -> OrgModel | None: ...
+
+    def list_ids(self) -> list[str]: ...
+
+
+class InMemoryOrgStore:
+    """A trivial dict-backed store of shared org models keyed by id."""
+
+    def __init__(self) -> None:
+        self._orgs: dict[str, OrgModel] = {}
+
+    def put(self, org: OrgModel) -> OrgModel:
+        if org.id is None:
+            raise ValueError("a shared org model must have an id before it is stored")
+        self._orgs[org.id] = org
+        return org
+
+    def get(self, org_id: str) -> OrgModel | None:
+        return self._orgs.get(org_id)
+
+    def list_ids(self) -> list[str]:
+        return list(self._orgs.keys())
+
+
+def create_org_store() -> OrgStore:
+    """Build the shared-org store from the environment (mirrors the others)."""
+
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        from procworks.db import SqlAlchemyOrgStore
+
+        return SqlAlchemyOrgStore(url, create_tables=True)
+    return InMemoryOrgStore()
+
+
+def make_org_resolver(store: OrgStore) -> Callable[[str | None], OrgModel | None]:
+    """Build a resolver that maps a (possibly absent) org id to its model."""
+
+    def resolve(org_id: str | None) -> OrgModel | None:
+        if org_id is None:
+            return None
+        return store.get(org_id)
+
+    return resolve
+
+
+def hydrate_org(
+    schema: ProcessSchema, org_resolver: Callable[[str | None], OrgModel | None]
+) -> ProcessSchema:
+    """Fill ``schema.org_model`` from the shared registry when linked.
+
+    A schema that references a shared org model carries only an empty embedded
+    ``org_model`` in storage; before any validation / resolution it must be
+    *hydrated* with the live shared model. Unlinked schemas are returned
+    unchanged. If the referenced model is missing, the (empty) embedded model
+    is left in place so validation surfaces the dangling references.
+    """
+
+    if schema.org_model_id is None:
+        return schema
+    org = org_resolver(schema.org_model_id)
+    if org is None:
+        return schema
+    return schema.model_copy(update={"org_model": org.model_copy(deep=True)})
+
+
+def dehydrate_org(schema: ProcessSchema) -> ProcessSchema:
+    """Clear the hydrated org master data before persisting a linked schema.
+
+    Keeps the shared org registry the single source of truth: a linked schema
+    is stored with an empty embedded ``org_model`` (only ``org_model_id`` is
+    persisted). Unlinked schemas are returned unchanged.
+    """
+
+    if schema.org_model_id is None:
+        return schema
+    return schema.model_copy(update={"org_model": OrgModel()})
+
