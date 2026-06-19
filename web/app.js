@@ -35,6 +35,8 @@ function defaultApiBase() {
 
 const state = {
   apiBase: localStorage.getItem("apiBase") || defaultApiBase(),
+  token: localStorage.getItem("authToken") || "",
+  principal: null,
   view: "model",
   schemaIds: [],
   schemaNames: {},
@@ -143,7 +145,7 @@ async function request(method, path, body) {
   try {
     resp = await fetch(state.apiBase + path, {
       method,
-      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      headers: authHeaders(body !== undefined),
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
@@ -157,13 +159,21 @@ async function request(method, path, body) {
   return data;
 }
 
+// Build request headers, attaching the bearer token when the user is logged in.
+function authHeaders(hasBody) {
+  const headers = {};
+  if (hasBody) headers["Content-Type"] = "application/json";
+  if (state.token) headers["Authorization"] = "Bearer " + state.token;
+  return headers;
+}
+
 const api = {
   get: (p) => request("GET", p),
   post: (p, b) => request("POST", p, b === undefined ? {} : b),
   patch: (p, b) => request("PATCH", p, b === undefined ? {} : b),
   del: (p) => request("DELETE", p),
   raw: async (p) => {
-    const resp = await fetch(state.apiBase + p);
+    const resp = await fetch(state.apiBase + p, { headers: authHeaders(false) });
     if (!resp.ok) throw { status: resp.status, detail: "Export fehlgeschlagen" };
     return resp.text();
   },
@@ -1299,20 +1309,31 @@ async function viewTasks() {
   const agents = Object.values(org.agents || {});
   if (!agents.length) { content.appendChild(emptyState("Keine Agenten im Organisationsmodell. Lege zuerst Agenten in der Ressourcensicht an.")); return; }
 
-  let agentId = localStorage.getItem("agentId");
-  if (!agentId || !agents.some((a) => a.id === agentId)) agentId = agents[0].id;
-
-  const sel = el("select", null, ...agents.map((a) => el("option", { value: a.id }, a.name)));
-  sel.value = agentId;
-  sel.addEventListener("change", () => { localStorage.setItem("agentId", sel.value); render(); });
-
-  const picker = el("div", { class: "panel" },
-    el("div", { class: "panel-h" }, el("h2", null, "Bearbeiter"), el("span", { class: "sub" }, "Aufgaben f\u00FCr eine Person, inkl. Vertretung")),
-    el("div", { class: "panel-b" }, el("label", { class: "field" }, "Angemeldet als", sel)));
+  // A bound principal (token login) is tied to one agent: no picker, the
+  // worklist comes from /me/tasks. In open dev mode we keep the agent picker.
+  const bound = state.principal && state.principal.agent_id;
+  let agentId;
+  let picker;
+  if (bound) {
+    agentId = state.principal.agent_id;
+    const who = state.principal.display_name || agentNameOf(agentId);
+    picker = el("div", { class: "panel" },
+      el("div", { class: "panel-h" }, el("h2", null, "Angemeldet"), el("span", { class: "sub" }, "Aufgaben f\u00FCr dich, inkl. Vertretung")),
+      el("div", { class: "panel-b" }, el("div", { class: "ok-banner" }, "\u2713 Angemeldet als " + who)));
+  } else {
+    agentId = localStorage.getItem("agentId");
+    if (!agentId || !agents.some((a) => a.id === agentId)) agentId = agents[0].id;
+    const sel = el("select", null, ...agents.map((a) => el("option", { value: a.id }, a.name)));
+    sel.value = agentId;
+    sel.addEventListener("change", () => { localStorage.setItem("agentId", sel.value); render(); });
+    picker = el("div", { class: "panel" },
+      el("div", { class: "panel-h" }, el("h2", null, "Bearbeiter"), el("span", { class: "sub" }, "Aufgaben f\u00FCr eine Person, inkl. Vertretung")),
+      el("div", { class: "panel-b" }, el("label", { class: "field" }, "Angemeldet als", sel)));
+  }
   content.appendChild(picker);
 
   let tasks = [];
-  try { tasks = await api.get(`/agents/${agentId}/tasks`); }
+  try { tasks = await api.get(bound ? "/me/tasks" : `/agents/${agentId}/tasks`); }
   catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
 
   const body = el("div", { class: "panel-b" });
@@ -1377,6 +1398,90 @@ function setActiveNav() {
   [...byId("nav").children].forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
 }
 
+// --- Auth / Login (Auth-Konzept Variante C) -------------------------------
+
+// German labels for the coarse RBAC roles (technical ids stay English).
+const ROLE_LABELS = { admin: "Administrator", modeler: "Modellierer", operator: "Bearbeiter", viewer: "Leser" };
+
+// Which roles may see each navigation view. In open dev mode the principal
+// holds every role, so the full UI stays visible exactly as before.
+const VIEW_ROLES = {
+  model: ["modeler", "admin"],
+  data: ["modeler", "admin"],
+  org: ["modeler", "admin"],
+  run: ["operator", "admin"],
+  tasks: ["operator", "admin"],
+  monitor: ["viewer", "operator", "modeler", "admin"],
+};
+
+function currentRoles() {
+  return (state.principal && state.principal.roles) || [];
+}
+
+function hasRole(...allowed) {
+  const roles = currentRoles();
+  return allowed.some((r) => roles.includes(r));
+}
+
+// Fetch the verified identity from the API (/auth/me). On 401 the token is
+// invalid; we drop it and fall back to anonymous so the UI stays usable.
+async function loadPrincipal() {
+  try {
+    state.principal = await api.get("/auth/me");
+  } catch (err) {
+    state.principal = null;
+    if (err && err.status === 401 && state.token) {
+      toast("err", "Anmeldung fehlgeschlagen", ["Token ung\u00FCltig \u2013 bitte erneut anmelden."]);
+    }
+  }
+  renderUser();
+  applyRoleNav();
+}
+
+function renderUser() {
+  const pill = byId("user-pill");
+  const foot = byId("auth-user");
+  const p = state.principal;
+  const bound = p && p.agent_id;
+  const roles = (p && p.roles) || [];
+  const roleText = roles.map((r) => ROLE_LABELS[r] || r).join(", ");
+  if (!p) {
+    pill.textContent = "nicht angemeldet";
+    pill.className = "pill pill-gray";
+    foot.textContent = "Nicht angemeldet";
+    return;
+  }
+  // Open dev mode: anonymous principal with all roles -> show "offen".
+  const open = !bound && roles.length >= 4;
+  pill.textContent = open ? "offen" : (p.display_name || p.subject);
+  pill.className = "pill " + (open ? "pill-gray" : "pill-green");
+  foot.textContent = open
+    ? "Modus: offen (kein Login)"
+    : `${p.display_name || p.subject} \u00B7 ${roleText || "ohne Rolle"}`;
+}
+
+// Hide nav entries the current role may not use and keep the active view valid.
+function applyRoleNav() {
+  const buttons = [...byId("nav").children];
+  buttons.forEach((b) => {
+    const allowed = VIEW_ROLES[b.dataset.view] || [];
+    const visible = hasRole(...allowed);
+    b.style.display = visible ? "" : "none";
+  });
+  const allowedNow = hasRole(...(VIEW_ROLES[state.view] || []));
+  if (!allowedNow) {
+    const first = buttons.find((b) => b.style.display !== "none");
+    if (first) state.view = first.dataset.view;
+  }
+}
+
+async function setToken(token) {
+  state.token = token.trim();
+  if (state.token) localStorage.setItem("authToken", state.token);
+  else localStorage.removeItem("authToken");
+  await boot();
+}
+
 function render() {
   const meta = VIEW_META[state.view];
   byId("view-title").textContent = meta.title;
@@ -1400,12 +1505,16 @@ function wireNav() {
     localStorage.setItem("apiBase", state.apiBase);
     await boot();
   });
+  const tokenInput = byId("auth-token");
+  tokenInput.value = state.token;
+  tokenInput.addEventListener("change", () => { setToken(tokenInput.value); });
 }
 
 async function boot() {
   try {
     await api.get("/health");
     setConnected(true);
+    await loadPrincipal();
     await loadSchemas();
     await refreshSchema();
   } catch (err) {

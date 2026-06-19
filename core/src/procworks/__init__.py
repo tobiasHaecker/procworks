@@ -30,6 +30,15 @@ from procworks.audit import (
     discover_process_map,
     instance_timeline,
 )
+from procworks.auth import (
+    ALL_ROLES,
+    AuthBackend,
+    AuthError,
+    OpenAuthBackend,
+    Principal,
+    create_auth_backend,
+)
+from procworks.auth_token import TokenAuthBackend
 from procworks.bpmn import (
     BpmnError,
     export_bpmn,
@@ -147,12 +156,15 @@ from procworks.store import (
 from procworks.validator import CorrectnessError, ValidationFinding, validate
 
 __all__ = [
+    "ALL_ROLES",
     "AccessMode",
     "ActivityStat",
     "ActivityTemplate",
     "Agent",
     "AuditEvent",
     "AuditLog",
+    "AuthBackend",
+    "AuthError",
     "BpmnError",
     "ConditionError",
     "Connector",
@@ -181,9 +193,11 @@ __all__ = [
     "NodeState",
     "NodeType",
     "OpenTask",
+    "OpenAuthBackend",
     "OrgModel",
     "OrgStore",
     "OrgUnit",
+    "Principal",
     "ProcessInstance",
     "ProcessMap",
     "ProcessMapEdge",
@@ -195,6 +209,7 @@ __all__ = [
     "StaffRuleKind",
     "SubProcessBinding",
     "TemplateParameter",
+    "TokenAuthBackend",
     "add_activity_template",
     "add_agent",
     "add_data_element",
@@ -212,6 +227,7 @@ __all__ = [
     "conditional_insert",
     "connect_data",
     "create_audit_log",
+    "create_auth_backend",
     "create_empty_schema",
     "create_org_store",
     "decide_branch",

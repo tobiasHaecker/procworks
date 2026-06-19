@@ -29,6 +29,11 @@
       <label class="api-field">API
         <input id="api-base" type="text" spellcheck="false" />
       </label>
+      <label class="api-field">Token
+        <input id="auth-token" type="password" spellcheck="false" autocomplete="off"
+               placeholder="Bearer-Token (optional)" />
+      </label>
+      <div id="auth-user" class="muted">Modus: offen (kein Login)</div>
       <div class="muted">Die GUI ist ein reiner Web-Client &ndash; alle Korrektheits&shy;entscheidungen trifft der Kern.</div>
     </div>
   </aside>
@@ -38,6 +43,7 @@
       <h1 id="view-title">Modellieren</h1>
       <span class="sub" id="view-sub"></span>
       <span class="spacer"></span>
+      <span id="user-pill" class="pill pill-gray">offen</span>
       <div id="schema-picker" class="picker"></div>
     </header>
     <section class="content" id="content"></section>

@@ -177,6 +177,39 @@ $env:PYTHONPATH="src"
 Interaktive Dokumentation (OpenAPI/Swagger) danach unter
 <http://127.0.0.1:8000/docs>.
 
+### Authentifizierung & Rollen (optional)
+
+Standardmäßig läuft die API im **offenen Entwicklungsmodus** ohne Login: jeder
+Aufruf erhält alle Rollen (`admin`, `modeler`, `operator`, `viewer`). Für einen
+geschützten Betrieb wird ein Token-Backend aktiviert:
+
+```powershell
+$env:PROCWORKS_AUTH="token"
+$env:PROCWORKS_TOKENS="C:\pfad\zu\tokens.json"
+$env:PROCWORKS_CORS_ORIGINS="https://app.example.com"
+```
+
+Die Token-Datei ordnet Bearer-Tokens einer Identität samt Rollen und – für
+Bearbeiter – einer gebundenen `agent_id` zu:
+
+```json
+{
+  "geheimes-token-erika": {
+    "subject": "erika",
+    "agent_id": "a1",
+    "roles": ["operator"],
+    "display_name": "Erika (Bearbeiterin)"
+  },
+  "geheimes-token-admin": { "subject": "ada", "roles": ["admin"] }
+}
+```
+
+Clients senden `Authorization: Bearer <token>`. `GET /auth/me` liefert die
+verifizierte Identität, `GET /me/tasks` die eigene Arbeitsliste der angemeldeten
+Person. Die handelnde Bearbeiter-Identität wird bei `complete`/`decide` aus dem
+Token abgeleitet (Impersonation-Schutz); die feingranulare BZR-Eignungsprüfung
+im Kern bleibt unverändert aktiv. Details: [`../docs/Auth-Konzept.md`](../docs/Auth-Konzept.md).
+
 ## Web-Client starten
 
 Der Web-Client unter [`../web/`](../web/) ist ein reiner No-Build-Client und

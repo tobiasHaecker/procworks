@@ -41,6 +41,11 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom puts Depends()/require_role() in argument
+# defaults on purpose; these calls are evaluated once and are safe (not B008).
+extend-immutable-calls = ["fastapi.Depends", "procworks.api.require_role"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

@@ -1,8 +1,36 @@
 # Auth-Konzept – Variante C: Pluggable AuthBackend
 
-> Status: **Entwurf für die spätere Umsetzung**
-> Betrifft: `core/src/procworks/api.py` (einziger Boundary), neues Modul `core/src/procworks/auth.py`
+> Status: **Umgesetzt** (siehe `core/src/procworks/auth.py`, `auth_token.py`, Rollen-Gates in `api.py`, Login-UI in `web/`)
+> Betrifft: `core/src/procworks/api.py` (einziger Boundary), Module `core/src/procworks/auth.py` + `auth_token.py`
 > Lizenz/Eigentümer: © Tobias Häcker · Business Source License 1.1
+
+## 0. Umsetzungsstand
+
+Variante C ist **vollständig umgesetzt** und durch Tests abgesichert
+(`core/tests/test_auth.py`, 17 Tests; Gesamtsuite grün). Die folgenden Abschnitte
+beschreiben den Entwurf; die tatsächliche Implementierung folgt ihm, mit diesen
+bewusst gewählten Abweichungen:
+
+- **`AuthBackend.authenticate(authorization: str | None)`** erhält nur den Wert
+  des `Authorization`-Headers (statt des kompletten `Request`). Das hält das
+  Backend frei von FastAPI-Typen und vereinfacht das Testen.
+- **`get_principal` und `require_role` liegen in `api.py`** (nicht in `auth.py`),
+  damit Tests das Modul-Global `procworks.api._auth_backend` per Monkeypatch
+  austauschen können. `auth.py` bleibt frei von FastAPI-Abhängigkeiten.
+- Zusätzlich umgesetzt: `GET /auth/me` (verifizierte Identität für die Login-UI),
+  `GET /me/tasks` (eigene Arbeitsliste der angemeldeten Person) sowie ein
+  Supervisor-Guard auf `GET /agents/{id}/tasks` (gebundene Nicht-Supervisor
+  sehen nur die eigene Liste).
+- Token werden ausschließlich als **SHA-256-Digest** gehalten
+  (`TokenAuthBackend`); Klartext-Token werden nicht gespeichert.
+- Der Web-Client (`web/index.html`, `web/app.js`) hat ein Login per
+  Bearer-Token, eine Rollen-Pill, rollenabhängige Navigation und zeigt einer
+  angemeldeten Person automatisch deren Arbeitsliste.
+- `JwtAuthBackend` ist weiterhin **nur vorgesehen** (Erweiterungspunkt), aber
+  noch nicht implementiert.
+- Lint-Hinweis: FastAPIs `Depends()`/`require_role()` in Default-Argumenten sind
+  in `core/pyproject.toml` als `extend-immutable-calls` von der Ruff-Regel B008
+  ausgenommen.
 
 ## 1. Ziel & Motivation
 
@@ -253,16 +281,21 @@ Neues Modul `core/tests/test_auth.py`:
 - **Kern-BZR unverändert:** nicht eignungsberechtigter Bearbeiter → weiterhin
   `409` aus dem Kern.
 
-## 9. Umsetzungsschritte (für später)
+## 9. Umsetzungsschritte (erledigt)
 
-1. `core/src/procworks/auth.py`: `Principal`, `AuthError`, `AuthBackend`-Protocol,
-   `OpenAuthBackend`, `get_principal`, `require_role`, `create_auth_backend`.
-2. `core/src/procworks/auth_token.py`: `TokenAuthBackend.from_env()`.
-3. `api.py`: Dependencies an den Endpunkten ergänzen; `_resolve_acting_agent`
-   einführen; `agent_id` in `/complete` und `/decide` aus dem `Principal` ziehen.
-4. CORS konfigurierbar machen (`PROCWORKS_CORS_ORIGINS`).
-5. `core/tests/test_auth.py` ergänzen; `ruff`/`mypy`/`pytest` grün halten.
-6. Doku/`README.md` und `SECURITY.md` um die Auth-Konfiguration ergänzen.
+1. ✅ `core/src/procworks/auth.py`: `Principal`, `AuthError`, `AuthBackend`-Protocol,
+   `OpenAuthBackend`, `create_auth_backend` (sowie `ALL_ROLES`, `bearer_token`).
+   `get_principal`/`require_role` liegen in `api.py` (siehe Abschnitt 0).
+2. ✅ `core/src/procworks/auth_token.py`: `TokenAuthBackend.from_env()`
+   (Token nur als SHA-256-Digest gespeichert).
+3. ✅ `api.py`: Rollen-Gates an allen Endpunkten; `_resolve_acting_agent`
+   eingeführt; `agent_id` in `/complete` und `/decide` aus dem `Principal`
+   gezogen; zusätzlich `GET /auth/me` und `GET /me/tasks`.
+4. ✅ CORS konfigurierbar (`PROCWORKS_CORS_ORIGINS`).
+5. ✅ `core/tests/test_auth.py` (17 Tests); `ruff`/`mypy`/`pytest` grün.
+6. ✅ `core/README.md` und `SECURITY.md` um die Auth-Konfiguration ergänzt;
+   `CHANGELOG.md` aktualisiert.
+7. ✅ Web-Client: Login per Bearer-Token, Rollen-Navigation, „Meine Aufgaben".
 
 ## 10. Nicht-Ziele
 

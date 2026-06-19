@@ -12,7 +12,10 @@ Interactive docs at /docs (OpenAPI is generated automatically).
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Response
+import os
+from collections.abc import Callable
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -31,6 +34,11 @@ from procworks.audit import (
     create_audit_log,
     discover_process_map,
     instance_timeline,
+)
+from procworks.auth import (
+    AuthError,
+    Principal,
+    create_auth_backend,
 )
 from procworks.bpmn import BpmnError
 from procworks.execution import ExecutionError
@@ -68,10 +76,18 @@ app = FastAPI(
 # The browser-based UI (Section 8) is a thin web client that may be served from
 # a different origin (file:// or a static dev server). It holds no correctness
 # logic, so a permissive CORS policy is safe for this local kernel: every
-# request still passes the same validate-before-commit path.
+# request still passes the same validate-before-commit path. In production,
+# ``PROCWORKS_CORS_ORIGINS`` (comma-separated) pins the allowed origins.
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("PROCWORKS_CORS_ORIGINS", "").strip()
+    if not raw:
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -83,6 +99,65 @@ _resolver = make_resolver(_store)
 _org_resolver = make_org_resolver(_org_store)
 _context = exe.ExecutionContext(_resolver, _instances)
 _audit = create_audit_log()
+
+# Auth is a coarse boundary layer (Auth concept, Variant C). The backend is
+# swapped via ``PROCWORKS_AUTH``; the default open backend grants every role and
+# leaves ``agent_id`` unbound, so existing clients/tests keep working unchanged.
+_auth_backend = create_auth_backend()
+
+
+def get_principal(request: Request) -> Principal:
+    """FastAPI dependency: the verified identity behind the request (401)."""
+
+    try:
+        return _auth_backend.authenticate(request.headers.get("Authorization"))
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=exc.message,
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
+def require_role(*allowed: str) -> Callable[[Principal], Principal]:
+    """Build a dependency that admits only principals holding one of ``allowed``.
+
+    This is the *coarse* gate at the boundary; the fine-grained BZR eligibility
+    in the core is unaffected and still decides who may actually work a node.
+    """
+
+    def _dep(principal: Principal = Depends(get_principal)) -> Principal:
+        if not principal.roles.intersection(allowed):
+            raise HTTPException(status_code=403, detail="forbidden")
+        return principal
+
+    return _dep
+
+
+# Reusable role gates (see Auth concept 3.4). ``viewer`` is the read floor that
+# every authenticated role clears; writes need modeler/operator/admin.
+_read = Depends(require_role("viewer", "operator", "modeler", "admin"))
+_model = Depends(require_role("modeler", "admin"))
+_run = Depends(require_role("operator", "admin"))
+_admin = Depends(require_role("admin"))
+
+
+def _resolve_acting_agent(principal: Principal, requested: str | None) -> str | None:
+    """Pick the acting agent id, never trusting the request body over identity.
+
+    A *bound* principal (token/JWT) acts only as itself: a divergent
+    ``req.agent_id`` is rejected (403). An *unbound* principal (open dev mode)
+    falls back to the requested id so the quickstart keeps working -- the core
+    BZR check still rejects an ineligible agent with 409.
+    """
+
+    if principal.is_bound:
+        if requested is not None and requested != principal.agent_id:
+            raise HTTPException(
+                status_code=403, detail="cannot act on behalf of another agent"
+            )
+        return principal.agent_id
+    return requested
 
 
 def _label_of(schema: ProcessSchema, node_id: str) -> str | None:
@@ -440,35 +515,56 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/schemas")
+@app.get("/auth/me", response_model=Principal)
+def get_me(principal: Principal = Depends(get_principal)) -> Principal:
+    """Return the verified identity of the caller (for the client's login UI)."""
+
+    return principal
+
+
+@app.get("/schemas", dependencies=[_read])
 def list_schemas() -> list[str]:
     return _store.list_ids()
 
 
-@app.post("/schemas", response_model=ProcessSchema, status_code=201)
+@app.post(
+    "/schemas", response_model=ProcessSchema, status_code=201, dependencies=[_model]
+)
 def create_schema(req: CreateSchemaRequest) -> ProcessSchema:
     return _commit_or_422(lambda: ops.create_empty_schema(req.name))
 
 
-@app.get("/schemas/{schema_id}", response_model=ProcessSchema)
+@app.get("/schemas/{schema_id}", response_model=ProcessSchema, dependencies=[_read])
 def get_schema(schema_id: str) -> ProcessSchema:
     return _get_or_404(schema_id)
 
 
-@app.get("/schemas/{schema_id}/validation", response_model=ValidationReport)
+@app.get(
+    "/schemas/{schema_id}/validation",
+    response_model=ValidationReport,
+    dependencies=[_read],
+)
 def get_validation(schema_id: str) -> ValidationReport:
     schema = _get_or_404(schema_id)
     findings = validate(schema, _resolver)
     return ValidationReport(correct=not findings, findings=findings)
 
 
-@app.post("/schemas/{schema_id}/serial-insert", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/serial-insert",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_serial_insert(schema_id: str, req: SerialInsertRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.serial_insert(schema, req.label, req.after_node_id))
 
 
-@app.post("/schemas/{schema_id}/parallel-insert", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/parallel-insert",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_parallel_insert(schema_id: str, req: ParallelInsertRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -476,14 +572,22 @@ def post_parallel_insert(schema_id: str, req: ParallelInsertRequest) -> ProcessS
     )
 
 
-@app.post("/schemas/{schema_id}/conditional-insert", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/conditional-insert",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_conditional_insert(schema_id: str, req: ConditionalInsertRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     branches = [(b.condition, b.label) for b in req.branches]
     return _commit_or_422(lambda: ops.conditional_insert(schema, branches, req.after_node_id))
 
 
-@app.post("/schemas/{schema_id}/data-elements", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/data-elements",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_add_data_element(schema_id: str, req: AddDataElementRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -491,7 +595,11 @@ def post_add_data_element(schema_id: str, req: AddDataElementRequest) -> Process
     )
 
 
-@app.post("/schemas/{schema_id}/data-access", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/data-access",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_connect_data(schema_id: str, req: ConnectDataRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -506,7 +614,11 @@ def post_connect_data(schema_id: str, req: ConnectDataRequest) -> ProcessSchema:
     )
 
 
-@app.post("/schemas/{schema_id}/connectors", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/connectors",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_register_connector(
     schema_id: str, req: RegisterConnectorRequest
 ) -> ProcessSchema:
@@ -521,6 +633,7 @@ def post_register_connector(
 @app.post(
     "/schemas/{schema_id}/data-elements/{element_id}/external",
     response_model=ProcessSchema,
+    dependencies=[_model],
 )
 def post_bind_external_data(
     schema_id: str, element_id: str, req: BindExternalDataRequest
@@ -537,13 +650,18 @@ def post_bind_external_data(
     )
 
 
-@app.get("/schemas/{schema_id}/bpmn")
+@app.get("/schemas/{schema_id}/bpmn", dependencies=[_read])
 def get_export_bpmn(schema_id: str) -> Response:
     schema = _get_or_404(schema_id)
     return Response(content=bpmn_io.export_bpmn(schema), media_type="application/xml")
 
 
-@app.post("/bpmn-import", response_model=ProcessSchema, status_code=201)
+@app.post(
+    "/bpmn-import",
+    response_model=ProcessSchema,
+    status_code=201,
+    dependencies=[_model],
+)
 def post_import_bpmn(req: ImportBpmnRequest) -> ProcessSchema:
     try:
         schema = bpmn_io.import_bpmn(
@@ -564,29 +682,33 @@ def post_import_bpmn(req: ImportBpmnRequest) -> ProcessSchema:
 # --- shared, cross-schema organisation models ---------------------------
 
 
-@app.get("/org-models", response_model=list[OrgModel])
+@app.get("/org-models", response_model=list[OrgModel], dependencies=[_read])
 def get_org_models() -> list[OrgModel]:
     return [org for oid in _org_store.list_ids() if (org := _org_store.get(oid)) is not None]
 
 
-@app.post("/org-models", response_model=OrgModel, status_code=201)
+@app.post(
+    "/org-models", response_model=OrgModel, status_code=201, dependencies=[_admin]
+)
 def post_create_org_model(req: CreateOrgModelRequest) -> OrgModel:
     org = org_ops.create_org_model(req.name, org_id=req.org_model_id)
     return _org_store.put(org)
 
 
-@app.get("/org-models/{org_id}", response_model=OrgModel)
+@app.get("/org-models/{org_id}", response_model=OrgModel, dependencies=[_read])
 def get_org_model(org_id: str) -> OrgModel:
     return _get_org_or_404(org_id)
 
 
-@app.post("/org-models/{org_id}/roles", response_model=OrgModel)
+@app.post("/org-models/{org_id}/roles", response_model=OrgModel, dependencies=[_admin])
 def post_org_add_role(org_id: str, req: AddRoleRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     return _commit_org_or_422(lambda: org_ops.org_add_role(org, req.name, role_id=req.role_id))
 
 
-@app.post("/org-models/{org_id}/org-units", response_model=OrgModel)
+@app.post(
+    "/org-models/{org_id}/org-units", response_model=OrgModel, dependencies=[_admin]
+)
 def post_org_add_unit(org_id: str, req: AddOrgUnitRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     return _commit_org_or_422(
@@ -600,19 +722,27 @@ def post_org_add_unit(org_id: str, req: AddOrgUnitRequest) -> OrgModel:
     )
 
 
-@app.post("/org-models/{org_id}/org-units/{org_unit_id}/manager", response_model=OrgModel)
+@app.post(
+    "/org-models/{org_id}/org-units/{org_unit_id}/manager",
+    response_model=OrgModel,
+    dependencies=[_admin],
+)
 def post_org_set_manager(org_id: str, org_unit_id: str, req: SetManagerRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     return _commit_org_or_422(lambda: org_ops.org_set_manager(org, org_unit_id, req.manager_id))
 
 
-@app.post("/org-models/{org_id}/org-units/{org_unit_id}/parent", response_model=OrgModel)
+@app.post(
+    "/org-models/{org_id}/org-units/{org_unit_id}/parent",
+    response_model=OrgModel,
+    dependencies=[_admin],
+)
 def post_org_set_parent(org_id: str, org_unit_id: str, req: SetParentRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     return _commit_org_or_422(lambda: org_ops.org_set_parent(org, org_unit_id, req.parent_id))
 
 
-@app.post("/org-models/{org_id}/agents", response_model=OrgModel)
+@app.post("/org-models/{org_id}/agents", response_model=OrgModel, dependencies=[_admin])
 def post_org_add_agent(org_id: str, req: AddAgentRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     return _commit_org_or_422(
@@ -627,7 +757,11 @@ def post_org_add_agent(org_id: str, req: AddAgentRequest) -> OrgModel:
     )
 
 
-@app.patch("/org-models/{org_id}/agents/{agent_id}", response_model=OrgModel)
+@app.patch(
+    "/org-models/{org_id}/agents/{agent_id}",
+    response_model=OrgModel,
+    dependencies=[_admin],
+)
 def patch_org_update_agent(org_id: str, agent_id: str, req: UpdateAgentRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     org_unit = req.org_unit_id if "org_unit_id" in req.model_fields_set else org_ops.KEEP
@@ -638,32 +772,46 @@ def patch_org_update_agent(org_id: str, agent_id: str, req: UpdateAgentRequest) 
     )
 
 
-@app.post("/org-models/{org_id}/agents/{agent_id}/deputy", response_model=OrgModel)
+@app.post(
+    "/org-models/{org_id}/agents/{agent_id}/deputy",
+    response_model=OrgModel,
+    dependencies=[_admin],
+)
 def post_org_set_deputy(org_id: str, agent_id: str, req: SetDeputyRequest) -> OrgModel:
     org = _get_org_or_404(org_id)
     return _commit_org_or_422(lambda: org_ops.org_set_deputy(org, agent_id, req.deputy_id))
 
 
-@app.post("/schemas/{schema_id}/org-model", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/org-model",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_link_org_model(schema_id: str, req: LinkOrgModelRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     org = _get_org_or_404(req.org_model_id)
     return _commit_or_422(lambda: ops.link_org_model(schema, req.org_model_id, org))
 
 
-@app.delete("/schemas/{schema_id}/org-model", response_model=ProcessSchema)
+@app.delete(
+    "/schemas/{schema_id}/org-model",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def delete_unlink_org_model(schema_id: str) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.unlink_org_model(schema))
 
 
-@app.post("/schemas/{schema_id}/roles", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/roles", response_model=ProcessSchema, dependencies=[_model])
 def post_add_role(schema_id: str, req: AddRoleRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.add_role(schema, req.name, req.role_id))
 
 
-@app.post("/schemas/{schema_id}/org-units", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/org-units", response_model=ProcessSchema, dependencies=[_model]
+)
 def post_add_org_unit(schema_id: str, req: AddOrgUnitRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -676,6 +824,7 @@ def post_add_org_unit(schema_id: str, req: AddOrgUnitRequest) -> ProcessSchema:
 @app.post(
     "/schemas/{schema_id}/org-units/{org_unit_id}/manager",
     response_model=ProcessSchema,
+    dependencies=[_model],
 )
 def post_set_org_unit_manager(
     schema_id: str, org_unit_id: str, req: SetManagerRequest
@@ -689,6 +838,7 @@ def post_set_org_unit_manager(
 @app.post(
     "/schemas/{schema_id}/org-units/{org_unit_id}/parent",
     response_model=ProcessSchema,
+    dependencies=[_model],
 )
 def post_set_org_unit_parent(
     schema_id: str, org_unit_id: str, req: SetParentRequest
@@ -699,7 +849,7 @@ def post_set_org_unit_parent(
     )
 
 
-@app.post("/schemas/{schema_id}/agents", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/agents", response_model=ProcessSchema, dependencies=[_model])
 def post_add_agent(schema_id: str, req: AddAgentRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -709,7 +859,11 @@ def post_add_agent(schema_id: str, req: AddAgentRequest) -> ProcessSchema:
     )
 
 
-@app.patch("/schemas/{schema_id}/agents/{agent_id}", response_model=ProcessSchema)
+@app.patch(
+    "/schemas/{schema_id}/agents/{agent_id}",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def patch_update_agent(
     schema_id: str, agent_id: str, req: UpdateAgentRequest
 ) -> ProcessSchema:
@@ -726,6 +880,7 @@ def patch_update_agent(
 @app.post(
     "/schemas/{schema_id}/agents/{agent_id}/deputy",
     response_model=ProcessSchema,
+    dependencies=[_model],
 )
 def post_set_agent_deputy(
     schema_id: str, agent_id: str, req: SetDeputyRequest
@@ -736,7 +891,11 @@ def post_set_agent_deputy(
     )
 
 
-@app.post("/schemas/{schema_id}/activity-templates", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/activity-templates",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_add_activity_template(
     schema_id: str, req: AddActivityTemplateRequest
 ) -> ProcessSchema:
@@ -753,7 +912,7 @@ def post_add_activity_template(
     )
 
 
-@app.post("/schemas/{schema_id}/service", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/service", response_model=ProcessSchema, dependencies=[_model])
 def post_assign_service(schema_id: str, req: AssignServiceRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -768,13 +927,13 @@ def post_assign_service(schema_id: str, req: AssignServiceRequest) -> ProcessSch
     )
 
 
-@app.post("/schemas/{schema_id}/staff-rule", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/staff-rule", response_model=ProcessSchema, dependencies=[_model])
 def post_assign_staff_rule(schema_id: str, req: AssignStaffRuleRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.assign_staff_rule(schema, req.node_id, req.rule))
 
 
-@app.post("/schemas/{schema_id}/subprocess", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/subprocess", response_model=ProcessSchema, dependencies=[_model])
 def post_insert_subprocess(
     schema_id: str, req: InsertSubprocessRequest
 ) -> ProcessSchema:
@@ -793,7 +952,11 @@ def post_insert_subprocess(
     )
 
 
-@app.post("/schemas/{schema_id}/subprocess-mapping", response_model=ProcessSchema)
+@app.post(
+    "/schemas/{schema_id}/subprocess-mapping",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def post_subprocess_mapping(
     schema_id: str, req: SubprocessMappingRequest
 ) -> ProcessSchema:
@@ -809,7 +972,7 @@ def post_subprocess_mapping(
     )
 
 
-@app.post("/schemas/{schema_id}/follow-up", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/follow-up", response_model=ProcessSchema, dependencies=[_model])
 def post_link_follow_up(schema_id: str, req: LinkFollowUpRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -826,13 +989,17 @@ def post_link_follow_up(schema_id: str, req: LinkFollowUpRequest) -> ProcessSche
     )
 
 
-@app.delete("/schemas/{schema_id}/follow-up/{link_id}", response_model=ProcessSchema)
+@app.delete(
+    "/schemas/{schema_id}/follow-up/{link_id}",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
 def delete_follow_up(schema_id: str, link_id: str) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.unlink_follow_up(schema, link_id))
 
 
-@app.post("/schemas/{schema_id}/release", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/release", response_model=ProcessSchema, dependencies=[_model])
 def post_release(schema_id: str) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.release(schema, _resolver))
@@ -841,7 +1008,7 @@ def post_release(schema_id: str) -> ProcessSchema:
 # --- execution endpoints -------------------------------------------------
 
 
-@app.get("/instances")
+@app.get("/instances", dependencies=[_read])
 def list_instances() -> list[str]:
     return _instances.list_ids()
 
@@ -850,6 +1017,7 @@ def list_instances() -> list[str]:
     "/schemas/{schema_id}/instances",
     response_model=ProcessInstance,
     status_code=201,
+    dependencies=[_run],
 )
 def post_instantiate(schema_id: str) -> ProcessInstance:
     schema = _get_or_404(schema_id)
@@ -870,12 +1038,16 @@ def post_instantiate(schema_id: str) -> ProcessInstance:
     return instance
 
 
-@app.get("/instances/{instance_id}", response_model=ProcessInstance)
+@app.get("/instances/{instance_id}", response_model=ProcessInstance, dependencies=[_read])
 def get_instance(instance_id: str) -> ProcessInstance:
     return _get_instance_or_404(instance_id)
 
 
-@app.get("/instances/{instance_id}/worklist", response_model=WorklistReport)
+@app.get(
+    "/instances/{instance_id}/worklist",
+    response_model=WorklistReport,
+    dependencies=[_read],
+)
 def get_worklist(instance_id: str) -> WorklistReport:
     instance = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(instance)
@@ -886,15 +1058,20 @@ def get_worklist(instance_id: str) -> WorklistReport:
     )
 
 
-@app.get("/instances/{instance_id}/tasks", response_model=list[OpenTask])
+@app.get(
+    "/instances/{instance_id}/tasks",
+    response_model=list[OpenTask],
+    dependencies=[_read],
+)
 def get_instance_tasks(instance_id: str) -> list[OpenTask]:
     instance = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(instance)
     return assignment.open_tasks(schema, instance)
 
 
-@app.get("/agents/{agent_id}/tasks", response_model=list[OpenTask])
-def get_agent_tasks(agent_id: str) -> list[OpenTask]:
+def _tasks_for_agent(agent_id: str) -> list[OpenTask]:
+    """Collect the open tasks an agent is currently eligible for (incl. deputy)."""
+
     tasks: list[OpenTask] = []
     for instance_id in _instances.list_ids():
         instance = _instances.get(instance_id)
@@ -907,7 +1084,34 @@ def get_agent_tasks(agent_id: str) -> list[OpenTask]:
     return tasks
 
 
-@app.post("/instances/{instance_id}/start", response_model=ProcessInstance)
+@app.get("/me/tasks", response_model=list[OpenTask])
+def get_my_tasks(
+    principal: Principal = Depends(require_role("operator", "admin")),
+) -> list[OpenTask]:
+    """The worklist of the logged-in agent (the bound principal's own tasks)."""
+
+    if principal.agent_id is None:
+        # Open dev mode: no bound agent -> use /agents/{id}/tasks with a picker.
+        return []
+    return _tasks_for_agent(principal.agent_id)
+
+
+@app.get("/agents/{agent_id}/tasks", response_model=list[OpenTask])
+def get_agent_tasks(
+    agent_id: str, principal: Principal = Depends(require_role("operator", "admin"))
+) -> list[OpenTask]:
+    # A bound, non-supervisor operator may only read their own worklist; an
+    # admin/modeler may inspect any agent's list (supervision).
+    if (
+        principal.is_bound
+        and principal.agent_id != agent_id
+        and not principal.roles.intersection({"admin", "modeler"})
+    ):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return _tasks_for_agent(agent_id)
+
+
+@app.post("/instances/{instance_id}/start", response_model=ProcessInstance, dependencies=[_run])
 def post_start_activity(instance_id: str, req: StartActivityRequest) -> ProcessInstance:
     instance = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(instance)
@@ -925,13 +1129,16 @@ def post_start_activity(instance_id: str, req: StartActivityRequest) -> ProcessI
 
 @app.post("/instances/{instance_id}/complete", response_model=ProcessInstance)
 def post_complete_activity(
-    instance_id: str, req: CompleteActivityRequest
+    instance_id: str,
+    req: CompleteActivityRequest,
+    principal: Principal = Depends(require_role("operator", "admin")),
 ) -> ProcessInstance:
     before = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(before)
+    acting_agent = _resolve_acting_agent(principal, req.agent_id)
     after = _run_or_409(
         lambda: exe.complete_activity(
-            before, schema, req.node_id, req.data, agent_id=req.agent_id, context=_context
+            before, schema, req.node_id, req.data, agent_id=acting_agent, context=_context
         )
     )
     _audit.append(
@@ -941,14 +1148,18 @@ def post_complete_activity(
         schema_version=after.schema_version,
         node_id=req.node_id,
         label=_label_of(schema, req.node_id),
-        agent_id=req.agent_id,
+        agent_id=acting_agent,
     )
     _record_completion(before, after)
     return after
 
 
 @app.post("/instances/{instance_id}/decide", response_model=ProcessInstance)
-def post_decide_branch(instance_id: str, req: DecideBranchRequest) -> ProcessInstance:
+def post_decide_branch(
+    instance_id: str,
+    req: DecideBranchRequest,
+    principal: Principal = Depends(require_role("operator", "admin")),
+) -> ProcessInstance:
     before = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(before)
     after = _run_or_409(
@@ -972,7 +1183,11 @@ def post_decide_branch(instance_id: str, req: DecideBranchRequest) -> ProcessIns
 # --- ad-hoc changes (per-instance variant; R1/R2) ------------------------
 
 
-@app.post("/instances/{instance_id}/adhoc/insert", response_model=ProcessInstance)
+@app.post(
+    "/instances/{instance_id}/adhoc/insert",
+    response_model=ProcessInstance,
+    dependencies=[_run],
+)
 def post_adhoc_insert(instance_id: str, req: AdhocInsertRequest) -> ProcessInstance:
     instance = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(instance)
@@ -992,7 +1207,11 @@ def post_adhoc_insert(instance_id: str, req: AdhocInsertRequest) -> ProcessInsta
     return after
 
 
-@app.post("/instances/{instance_id}/adhoc/delete", response_model=ProcessInstance)
+@app.post(
+    "/instances/{instance_id}/adhoc/delete",
+    response_model=ProcessInstance,
+    dependencies=[_run],
+)
 def post_adhoc_delete(instance_id: str, req: AdhocDeleteRequest) -> ProcessInstance:
     instance = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(instance)
@@ -1014,7 +1233,7 @@ def post_adhoc_delete(instance_id: str, req: AdhocDeleteRequest) -> ProcessInsta
 # --- schema evolution + instance migration (M1-M5) -----------------------
 
 
-@app.post("/schemas/{schema_id}/revision", response_model=ProcessSchema)
+@app.post("/schemas/{schema_id}/revision", response_model=ProcessSchema, dependencies=[_model])
 def post_new_revision(schema_id: str, req: RevisionRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(
@@ -1025,6 +1244,7 @@ def post_new_revision(schema_id: str, req: RevisionRequest) -> ProcessSchema:
 @app.post(
     "/instances/{instance_id}/migration-check",
     response_model=MigrationReport,
+    dependencies=[_run],
 )
 def post_migration_check(
     instance_id: str, req: MigrateRequest
@@ -1042,7 +1262,7 @@ def post_migration_check(
     return MigrationReport(migratable=not findings, findings=findings)
 
 
-@app.post("/instances/{instance_id}/migrate", response_model=ProcessInstance)
+@app.post("/instances/{instance_id}/migrate", response_model=ProcessInstance, dependencies=[_run])
 def post_migrate(instance_id: str, req: MigrateRequest) -> ProcessInstance:
     instance = _get_instance_or_404(instance_id)
     source = _get_or_404(instance.schema_id)
@@ -1072,13 +1292,17 @@ def post_migrate(instance_id: str, req: MigrateRequest) -> ProcessInstance:
 # --- monitoring + audit (step 15) ----------------------------------------
 
 
-@app.get("/instances/{instance_id}/audit", response_model=list[AuditEvent])
+@app.get(
+    "/instances/{instance_id}/audit",
+    response_model=list[AuditEvent],
+    dependencies=[_read],
+)
 def get_instance_audit(instance_id: str) -> list[AuditEvent]:
     _get_instance_or_404(instance_id)
     return instance_timeline(_audit.list_all(), instance_id)
 
 
-@app.get("/audit", response_model=list[AuditEvent])
+@app.get("/audit", response_model=list[AuditEvent], dependencies=[_read])
 def get_audit(
     schema_id: str | None = None, instance_id: str | None = None
 ) -> list[AuditEvent]:
@@ -1090,11 +1314,11 @@ def get_audit(
     return events
 
 
-@app.get("/monitoring/kpis", response_model=KpiReport)
+@app.get("/monitoring/kpis", response_model=KpiReport, dependencies=[_read])
 def get_kpis(schema_id: str | None = None) -> KpiReport:
     return compute_kpis(_audit.list_all(), schema_id)
 
 
-@app.get("/monitoring/process-map", response_model=ProcessMap)
+@app.get("/monitoring/process-map", response_model=ProcessMap, dependencies=[_read])
 def get_process_map(schema_id: str | None = None) -> ProcessMap:
     return discover_process_map(_audit.list_all(), schema_id)

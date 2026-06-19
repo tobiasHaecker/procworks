@@ -42,3 +42,22 @@ Bitte gib so viele Details wie möglich an:
 
 Wir bitten um **Coordinated Disclosure**: Bitte veröffentliche Details erst,
 nachdem ein Fix verfügbar ist.
+
+## Authentifizierung & Betrieb
+
+Die API trägt eine austauschbare Auth-Schicht am Boundary (`auth.py`,
+Auth-Konzept Variante C). Hinweise für den produktiven Betrieb:
+
+- **Standardmodus ist „offen"** (`PROCWORKS_AUTH=open`): keine Identitätsprüfung,
+  alle Rollen freigegeben. Dieser Modus ist ausschließlich für die lokale
+  Entwicklung gedacht und darf **nicht** öffentlich exponiert werden.
+- **Produktiv** `PROCWORKS_AUTH=token` setzen und Tokens über `PROCWORKS_TOKENS`
+  (JSON-Datei) bereitstellen. Tokens werden nur als SHA-256-Digest gehalten.
+  Die Token-Datei gehört nicht ins Repository und sollte restriktive
+  Dateirechte erhalten.
+- **CORS** über `PROCWORKS_CORS_ORIGINS` (kommagetrennt) auf die tatsächlich
+  erlaubten Ursprünge einschränken; der Default `*` ist nur für die Entwicklung.
+- Die handelnde Bearbeiter-Identität wird bei `complete`/`decide` aus dem
+  verifizierten `Principal` abgeleitet, niemals aus dem Request-Body
+  (Impersonation-Schutz). Die feingranulare BZR-Eignungsprüfung im Kern bleibt
+  als zusätzliche Schutzschicht aktiv.

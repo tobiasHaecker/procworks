@@ -9,6 +9,20 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- Authentifizierung & rollenbasierte Zugriffskontrolle (Auth-Konzept Variante C):
+  austauschbarer `AuthBackend` (analog `SchemaStore`) mit Standard-Modus „offen"
+  (`OpenAuthBackend`, Entwicklung) und Token-Backend (`TokenAuthBackend`, gegen
+  eine Token-Datei). Neue Module `auth.py` + `auth_token.py`, `Principal` mit
+  gebundener Bearbeiter-Identität (`agent_id`). Grobe Rollen `admin`, `modeler`,
+  `operator`, `viewer` schützen jeden API-Endpunkt; die feingranulare
+  BZR-Eignungsprüfung im Kern bleibt unverändert. Neuer Endpunkt `GET /auth/me`
+  sowie `GET /me/tasks` (eigene Arbeitsliste der angemeldeten Person). Die
+  Impersonation-Lücke ist geschlossen: `complete`/`decide` nehmen die handelnde
+  Identität aus dem `Principal`, nicht mehr aus dem Request-Body; das Audit-Log
+  führt die echte Identität. CORS über `PROCWORKS_CORS_ORIGINS` konfigurierbar.
+  Konfiguration via `PROCWORKS_AUTH` (`open`/`token`) und `PROCWORKS_TOKENS`.
+  Web-Client: Login per Bearer-Token, Rollen-Pill, rollenabhängige Navigation
+  und „Meine Aufgaben" für die angemeldete Person.
 - Geteilte, modellübergreifende Organisationsmodelle: Eine Organisation kann
   einmal modelliert und in mehreren Prozessmodellen verwendet werden. Schemata
   verweisen per `org_model_id` live auf eine zentral gepflegte Organisation
