@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Integer,
     String,
@@ -31,6 +32,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from procworks.audit import AuditEvent, EventType
+from procworks.auth_password import User
 from procworks.model import OrgModel, ProcessInstance, ProcessSchema
 
 #: JSONB on PostgreSQL, generic JSON elsewhere (e.g. SQLite in tests).
@@ -287,5 +289,78 @@ class SqlAlchemyAuditLog:
                 .order_by(AuditEventRow.seq)
             )
             return [_event_from_row(row) for row in session.scalars(stmt)]
+
+
+class UserRow(Base):
+    """One row per login user (durable part of the password auth backend)."""
+
+    __tablename__ = "auth_user"
+
+    login: Mapped[str] = mapped_column(String, primary_key=True)
+    subject: Mapped[str] = mapped_column(String, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    roles: Mapped[list[str]] = mapped_column(JsonDocument, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    must_change: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+def _user_from_row(row: UserRow) -> User:
+    return User(
+        login=row.login,
+        password_hash=row.password_hash,
+        subject=row.subject,
+        agent_id=row.agent_id,
+        roles=frozenset(row.roles),
+        display_name=row.display_name,
+        must_change=row.must_change,
+    )
+
+
+class SqlAlchemyCredentialStore:
+    """A login-user store backed by a SQLAlchemy engine.
+
+    Mirrors the other stores' engine/URL conventions and implements the
+    ``get_user``/``put_user``/``list_users``/``delete_user`` interface, so the
+    password backend is agnostic of the backend. Sessions are intentionally
+    *not* persisted here -- they are ephemeral in-memory state of the backend.
+    """
+
+    def __init__(self, url: str, *, create_tables: bool = False) -> None:
+        self._engine = create_engine(url, future=True)
+        if create_tables:
+            Base.metadata.create_all(self._engine)
+
+    def get_user(self, login: str) -> User | None:
+        with Session(self._engine) as session:
+            row = session.get(UserRow, login)
+            return _user_from_row(row) if row is not None else None
+
+    def put_user(self, user: User) -> User:
+        with Session(self._engine) as session:
+            row = session.get(UserRow, user.login)
+            if row is None:
+                row = UserRow(login=user.login)
+                session.add(row)
+            row.subject = user.subject
+            row.password_hash = user.password_hash
+            row.agent_id = user.agent_id
+            row.roles = sorted(user.roles)
+            row.display_name = user.display_name
+            row.must_change = user.must_change
+            session.commit()
+        return user
+
+    def list_users(self) -> list[User]:
+        with Session(self._engine) as session:
+            return [_user_from_row(row) for row in session.scalars(select(UserRow))]
+
+    def delete_user(self, login: str) -> None:
+        with Session(self._engine) as session:
+            row = session.get(UserRow, login)
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
 
 

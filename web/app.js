@@ -37,6 +37,8 @@ const state = {
   apiBase: localStorage.getItem("apiBase") || defaultApiBase(),
   token: localStorage.getItem("authToken") || "",
   principal: null,
+  authMode: "open",
+  passwordLogin: false,
   view: "model",
   schemaIds: [],
   schemaNames: {},
@@ -827,6 +829,12 @@ function agentListPanel(org, draft) {
       const editBtn = el("button", { class: "btn small", onClick: () => editAgent(a), disabled: !draft }, "Bearbeiten");
       const depBtn = el("button", { class: "btn small", onClick: () => editDeputy(a) }, "Vertreter");
       const actions = el("div", { style: "display:flex; gap:6px; justify-content:flex-end" }, editBtn, depBtn);
+      // Login provisioning is an admin-only convenience available in password
+      // mode; it is independent of the schema lifecycle (works on shared orgs).
+      if (state.passwordLogin && hasRole("admin")) {
+        actions.appendChild(
+          el("button", { class: "btn small", onClick: () => provisionLogin(a) }, "Login"));
+      }
       return [a.name, roles, unit, dep, actions];
     });
     body.appendChild(table(["Agent", "Rollen", "Abteilung", "Vertreter", ""], rows));
@@ -970,6 +978,58 @@ function editDeputy(agent) {
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Speichern");
 }
+
+// Client-side mirror of the server's suggest_login (vorname.nachname). Only used
+// to preview the suggestion; the server remains the source of truth.
+function suggestLoginClient(name) {
+  const map = { "\u00E4": "ae", "\u00F6": "oe", "\u00FC": "ue", "\u00DF": "ss",
+    "\u00C4": "ae", "\u00D6": "oe", "\u00DC": "ue" };
+  const translit = (name || "").replace(/[\u00E4\u00F6\u00FC\u00DF\u00C4\u00D6\u00DC]/g, (c) => map[c]);
+  const ascii = translit.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const parts = ascii.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return parts.join(".") || "user";
+}
+
+// Admin convenience (password mode): provision a login for an agent. The login
+// is suggested from the name (server is authoritative); the admin picks the
+// coarse RBAC roles. The one-off initial password is shown once afterwards.
+function provisionLogin(agent) {
+  const roleSel = el("select", { multiple: "multiple", size: 4 },
+    ...Object.keys(ROLE_LABELS).map((r) => {
+      const o = el("option", { value: r }, ROLE_LABELS[r]);
+      if (r === "operator") o.selected = true;
+      return o;
+    }));
+  const loginInput = el("input", { type: "text", placeholder: suggestLoginClient(agent.name) });
+  openModal(`Login anlegen: ${agent.name}`, el("div", null,
+    el("div", { class: "muted", style: "margin-bottom:10px" },
+      "Der Login wird aus dem Namen vorgeschlagen (\u00FCberschreibbar). Es wird ein Initialpasswort erzeugt, das einmalig angezeigt wird; die Person vergibt beim ersten Login ein eigenes Passwort."),
+    el("label", { class: "field" }, "Rollen (Mehrfachauswahl)", roleSel),
+    el("label", { class: "field", style: "margin-top:10px" }, "Login (optional)", loginInput)), async () => {
+    const roles = [...roleSel.selectedOptions].map((o) => o.value);
+    if (!roles.length) { toast("err", "Bitte mindestens eine Rolle w\u00E4hlen"); return false; }
+    const payload = { agent_id: agent.id, display_name: agent.name, roles };
+    if (loginInput.value.trim()) payload.login = loginInput.value.trim();
+    try {
+      const res = await api.post("/users", payload);
+      showLoginCredentials(res);
+      toast("ok", "Login angelegt", [`Login: ${res.login}`]);
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Anlegen");
+}
+
+// Show the freshly provisioned login + one-off initial password (shown once).
+function showLoginCredentials(res) {
+  const loginField = el("input", { type: "text", value: res.login, readonly: "readonly" });
+  const pwField = el("input", { type: "text", value: res.initial_password, readonly: "readonly" });
+  openModal("Zugangsdaten", el("div", null,
+    el("div", { class: "muted", style: "margin-bottom:10px" },
+      "Bitte notieren und der Person sicher mitteilen. Das Initialpasswort wird nur jetzt angezeigt."),
+    el("label", { class: "field" }, "Login", loginField),
+    el("label", { class: "field", style: "margin-top:10px" }, "Initialpasswort", pwField)),
+    async () => true, "Schlie\u00DFen");
+}
+
 
 function addStaffRule() {
   const schema = state.schema;
@@ -1438,13 +1498,151 @@ async function loadPrincipal() {
   applyRoleNav();
 }
 
+// Ask the API which login UI to present (open/token/password). In password mode
+// the SPA gates the whole app behind a login screen; the manual token field is
+// hidden because the server issues session tokens via /auth/login.
+async function loadAuthConfig() {
+  try {
+    const cfg = await api.get("/auth/config");
+    state.authMode = cfg.mode || "open";
+    state.passwordLogin = !!cfg.password_login;
+  } catch (_e) {
+    state.authMode = "open";
+    state.passwordLogin = false;
+  }
+  const tokenField = byId("token-field");
+  if (tokenField) tokenField.style.display = state.passwordLogin ? "none" : "";
+}
+
+function showOverlay(card) {
+  const root = byId("auth-overlay");
+  clear(root);
+  root.appendChild(card);
+  root.style.display = "grid";
+}
+
+function hideOverlay() {
+  const root = byId("auth-overlay");
+  clear(root);
+  root.style.display = "none";
+}
+
+function authBrand(subtitle) {
+  return el("div", { class: "auth-brand" },
+    el("div", { class: "logo" }, "CbC"),
+    el("div", {},
+      el("h2", {}, "ProcWorks"),
+      el("div", { class: "auth-hint" }, subtitle)));
+}
+
+// Full-screen login: exchange username + password for a session token, store it
+// and continue booting. A forced password change is handled right after.
+function showLoginOverlay() {
+  const errBox = el("div", { class: "auth-err" });
+  const loginInput = el("input", { type: "text", id: "login-name", autocomplete: "username", placeholder: "vorname.nachname" });
+  const pwInput = el("input", { type: "password", id: "login-pw", autocomplete: "current-password", placeholder: "Passwort" });
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    errBox.textContent = "";
+    try {
+      const res = await api.post("/auth/login", {
+        login: loginInput.value.trim(),
+        password: pwInput.value,
+      });
+      state.token = res.token;
+      localStorage.setItem("authToken", state.token);
+      if (res.must_change) {
+        showChangePasswordOverlay(true);
+      } else {
+        hideOverlay();
+        await boot();
+      }
+    } catch (err) {
+      errBox.textContent = err && err.status === 401
+        ? "Login oder Passwort ist falsch."
+        : "Anmeldung fehlgeschlagen.";
+    }
+  };
+  const form = el("form", { onSubmit: submit },
+    el("label", { class: "field" }, "Login", loginInput),
+    el("label", { class: "field" }, "Passwort", pwInput),
+    errBox,
+    el("button", { class: "btn primary", type: "submit" }, "Anmelden"));
+  const card = el("div", { class: "auth-card" },
+    authBrand("Bitte melden Sie sich an."), form);
+  showOverlay(card);
+  setTimeout(() => loginInput.focus(), 0);
+}
+
+// Forced (first login) or self-service password change. On success we have a
+// usable session and boot the app.
+function showChangePasswordOverlay(forced) {
+  const errBox = el("div", { class: "auth-err" });
+  const curInput = el("input", { type: "password", autocomplete: "current-password", placeholder: "Aktuelles Passwort" });
+  const newInput = el("input", { type: "password", autocomplete: "new-password", placeholder: "Neues Passwort (min. 8 Zeichen)" });
+  const repInput = el("input", { type: "password", autocomplete: "new-password", placeholder: "Neues Passwort wiederholen" });
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    errBox.textContent = "";
+    if (newInput.value !== repInput.value) {
+      errBox.textContent = "Die Passw\u00F6rter stimmen nicht \u00FCberein.";
+      return;
+    }
+    try {
+      await api.post("/auth/change-password", {
+        current_password: curInput.value,
+        new_password: newInput.value,
+      });
+      hideOverlay();
+      toast("ok", "Passwort ge\u00E4ndert", ["Sie sind jetzt angemeldet."]);
+      await boot();
+    } catch (err) {
+      errBox.textContent = err && err.status === 400
+        ? "Passwort zu kurz oder identisch mit dem alten."
+        : (err && err.status === 401
+          ? "Aktuelles Passwort ist falsch."
+          : "\u00C4nderung fehlgeschlagen.");
+    }
+  };
+  const subtitle = forced
+    ? "Bitte vergeben Sie ein eigenes Passwort."
+    : "Passwort \u00E4ndern.";
+  const form = el("form", { onSubmit: submit },
+    el("label", { class: "field" }, "Aktuelles Passwort", curInput),
+    el("label", { class: "field" }, "Neues Passwort", newInput),
+    el("label", { class: "field" }, "Wiederholen", repInput),
+    errBox,
+    el("button", { class: "btn primary", type: "submit" }, "Speichern"));
+  const card = el("div", { class: "auth-card" }, authBrand(subtitle), form);
+  showOverlay(card);
+  setTimeout(() => curInput.focus(), 0);
+}
+
+// End the session server-side, drop the local token and return to the login.
+async function logout() {
+  try {
+    await api.post("/auth/logout");
+  } catch (_e) {
+    // ignore: the token is dropped locally regardless.
+  }
+  state.token = "";
+  state.principal = null;
+  localStorage.removeItem("authToken");
+  if (state.passwordLogin) showLoginOverlay();
+  else await boot();
+}
+
+
 function renderUser() {
   const pill = byId("user-pill");
   const foot = byId("auth-user");
+  const logoutBtn = byId("logout-btn");
   const p = state.principal;
   const bound = p && p.agent_id;
   const roles = (p && p.roles) || [];
   const roleText = roles.map((r) => ROLE_LABELS[r] || r).join(", ");
+  const showLogout = state.passwordLogin && !!p;
+  if (logoutBtn) logoutBtn.style.display = showLogout ? "" : "none";
   if (!p) {
     pill.textContent = "nicht angemeldet";
     pill.className = "pill pill-gray";
@@ -1455,6 +1653,15 @@ function renderUser() {
   const open = !bound && roles.length >= 4;
   pill.textContent = open ? "offen" : (p.display_name || p.subject);
   pill.className = "pill " + (open ? "pill-gray" : "pill-green");
+  if (showLogout) {
+    clear(foot);
+    foot.appendChild(el("span", {}, `${p.display_name || p.subject} \u00B7 ${roleText || "ohne Rolle"}`));
+    foot.appendChild(document.createTextNode(" \u00B7 "));
+    foot.appendChild(el("a", {
+      href: "#", onClick: (e) => { e.preventDefault(); showChangePasswordOverlay(false); },
+    }, "Passwort \u00E4ndern"));
+    return;
+  }
   foot.textContent = open
     ? "Modus: offen (kein Login)"
     : `${p.display_name || p.subject} \u00B7 ${roleText || "ohne Rolle"}`;
@@ -1508,13 +1715,27 @@ function wireNav() {
   const tokenInput = byId("auth-token");
   tokenInput.value = state.token;
   tokenInput.addEventListener("change", () => { setToken(tokenInput.value); });
+  const logoutBtn = byId("logout-btn");
+  if (logoutBtn) logoutBtn.addEventListener("click", () => { logout(); });
 }
 
 async function boot() {
   try {
     await api.get("/health");
     setConnected(true);
+    await loadAuthConfig();
+    // In password mode an unauthenticated visitor must log in first; the rest
+    // of the app stays hidden behind the overlay until /auth/me succeeds.
+    if (state.passwordLogin && !state.token) {
+      showLoginOverlay();
+      return;
+    }
     await loadPrincipal();
+    if (state.passwordLogin && !state.principal) {
+      showLoginOverlay();
+      return;
+    }
+    hideOverlay();
     await loadSchemas();
     await refreshSchema();
   } catch (err) {

@@ -28,6 +28,12 @@ bewusst gewählten Abweichungen:
   angemeldeten Person automatisch deren Arbeitsliste.
 - `JwtAuthBackend` ist weiterhin **nur vorgesehen** (Erweiterungspunkt), aber
   noch nicht implementiert.
+- **Passwort-Login ergänzt (Abschnitt 11):** Für eigenständige Deployments ohne
+  externen IdP gibt es jetzt ein drittes Backend `PasswordAuthBackend`
+  (`PROCWORKS_AUTH=password`) mit Login-Seite, Initialpasswort und erzwungener
+  Passwortänderung beim ersten Login. Die Zugangsdaten liegen in einem
+  separaten `CredentialStore` – **nicht** im Agenten-/Org-Modell.
+  Abgesichert durch `core/tests/test_auth_password.py` (42 Tests).
 - Lint-Hinweis: FastAPIs `Depends()`/`require_role()` in Default-Argumenten sind
   in `core/pyproject.toml` als `extend-immutable-calls` von der Ruff-Regel B008
   ausgenommen.
@@ -251,8 +257,12 @@ relevant wird).
 
 | Variable            | Werte                         | Wirkung                                       |
 | ------------------- | ----------------------------- | --------------------------------------------- |
-| `PROCWORKS_AUTH`    | `open` (Default), `token`, `jwt` | Auswahl des AuthBackends                    |
+| `PROCWORKS_AUTH`    | `open` (Default), `token`, `password`, `jwt` | Auswahl des AuthBackends        |
 | `PROCWORKS_TOKENS`  | Pfad/URL/Connection            | Tokenquelle für `TokenAuthBackend`           |
+| `PROCWORKS_SESSION_TTL_MINUTES` | Ganzzahl (Default 720) | Lebensdauer einer Login-Session (Passwort-Modus) |
+| `PROCWORKS_ADMIN_LOGIN` / `PROCWORKS_ADMIN_PASSWORD` | Login + Passwort | Initial-Admin-Bootstrap (nur Passwort-Modus, idempotent) |
+| `PROCWORKS_ADMIN_NAME` | Anzeigename               | Optionaler Anzeigename des Initial-Admins     |
+| `DATABASE_URL`      | SQLAlchemy-URL                 | Persistenter `CredentialStore` (sonst In-Memory) |
 | (JWT, später)       | Issuer, JWKS-URL, Audience     | Validierungsparameter für `JwtAuthBackend`   |
 
 Vorgaben:
@@ -299,7 +309,95 @@ Neues Modul `core/tests/test_auth.py`:
 
 ## 10. Nicht-Ziele
 
-- Kein Benutzer-Management-UI und kein Passwort-Login im Kern (Identitäten
-  kommen vom Token/IdP).
+- Kein Passwort-Login **im Modellkern**: Zugangsdaten sind kein Bestandteil des
+  Agenten-/Org-Modells. Das optionale `PasswordAuthBackend` (Abschnitt 11) hält
+  sie bewusst in einem separaten `CredentialStore`; das Modell bleibt ein
+  reines, teilbares CbC-Artefakt.
 - Keine Verlagerung von Korrektheitslogik in die Auth-Schicht – BZR-Eignung
   und Validierung bleiben im Kern (`validate-before-commit`).
+
+## 11. Passwort-Login (eigenständiges Deployment)
+
+Für Installationen ohne externen Identity-Provider bietet ProcWorks ein
+selbst­ständiges Passwort-Login. Es ist die zweite konkrete Umsetzung des
+`AuthBackend`-Protokolls und wird über `PROCWORKS_AUTH=password` aktiviert.
+
+### 11.1 Designentscheidungen
+
+- **Zugangsdaten getrennt vom Modell.** Ein `Agent` ist ein *Modellierungs*-
+  Artefakt (CbC-validiert, persistiert, zwischen Modellen teilbar); ein `User`
+  ist *operativer Sicherheitszustand*. Beide sind nur über `agent_id` verknüpft.
+  Nutzer liegen in einem dedizierten `CredentialStore`
+  (`InMemoryCredentialStore` oder `SqlAlchemyCredentialStore`), nie in einem
+  Schema.
+- **Login wird vorgeschlagen, nicht erzwungen.** `suggest_login(name)` leitet aus
+  dem Anzeigenamen einen stabilen Login `vorname.nachname` ab (Umlaut-
+  Transliteration `ä→ae`, Kollisions-Suffix `…2`, `…3`). Der Login wird danach
+  eigenständig gespeichert und ist vom Namen entkoppelt.
+- **Passwörter mit der Standardbibliothek gehasht** (`hashlib.scrypt`,
+  pro Nutzer eigener Salt, konstante Vergleichszeit) – keine zusätzliche
+  Laufzeit­abhängigkeit. Format: `scrypt$N$r$p$salt_hex$hash_hex`.
+- **Sessions sind opake Bearer-Token**, beim Login ausgestellt und nur als
+  SHA-256-Digest **im Speicher** gehalten. Ein Neustart erzwingt lediglich ein
+  erneutes Login; der dauerhafte Teil (die Nutzer) liegt im `CredentialStore`.
+- **Initialpasswort + erzwungene Änderung.** Beim Anlegen erhält ein Nutzer ein
+  zufälliges Initialpasswort (einmalig dem Admin angezeigt) und das Flag
+  `must_change`. Beim ersten Login verlangt die Login-Seite ein eigenes
+  Passwort (min. 8 Zeichen, ungleich dem alten); danach ist man direkt
+  angemeldet.
+
+### 11.2 Bausteine
+
+- `core/src/procworks/auth_password.py`: `hash_password`/`verify_password`,
+  `suggest_login`, `User`/`UserView`, `CredentialStore`-Protocol,
+  `InMemoryCredentialStore`, `create_credential_store`, `PasswordPolicyError`
+  und `PasswordAuthBackend` (Login/Logout/Passwortänderung/Provisionierung).
+- `core/src/procworks/db.py`: `SqlAlchemyCredentialStore` (Tabelle `auth_user`).
+- `core/migrations/versions/0005_user_credential.py`: Migration der Tabelle.
+
+### 11.3 Endpunkte
+
+| Methode + Pfad                    | Rolle   | Zweck                                            |
+| --------------------------------- | ------- | ------------------------------------------------ |
+| `GET /auth/config`                | öffentl. | Sagt dem Client, welche Login-UI gilt           |
+| `POST /auth/login`                | öffentl. | Login → Session-Token (`must_change`-Flag)       |
+| `POST /auth/change-password`      | angem.  | Eigenes Passwort ändern, löscht `must_change`    |
+| `POST /auth/logout`               | angem.  | Session-Token serverseitig entwerten             |
+| `GET /users`                      | admin   | Login-Nutzer auflisten (ohne Passwort-Hash)      |
+| `POST /users`                     | admin   | Login aus Agent provisionieren (Initialpasswort) |
+| `POST /users/{login}/reset-password` | admin | Neues Initialpasswort setzen (erzwingt Änderung) |
+| `DELETE /users/{login}`           | admin   | Login-Nutzer entfernen                           |
+
+### 11.4 Bootstrap & erster Admin
+
+Ein frischer `CredentialStore` ist leer. Damit überhaupt jemand Nutzer anlegen
+kann, provisioniert `PROCWORKS_ADMIN_LOGIN` + `PROCWORKS_ADMIN_PASSWORD` beim
+Start genau einen Admin (idempotent, `must_change=True`). Dieser ändert beim
+ersten Login sein Passwort und legt anschließend weitere Logins über
+`POST /users` an.
+
+### 11.5 Web-Client
+
+Der Client liest beim Start `GET /auth/config`. Im Passwort-Modus erscheint vor
+der eigentlichen App ein Vollbild-Login; bei `must_change` folgt direkt die
+Maske zur Passwortvergabe. Das Session-Token liegt – wie beim Token-Login – in
+`localStorage` (`authToken`). In der Seitenleiste gibt es „Passwort ändern" und
+„Abmelden"; das manuelle Token-Feld ist im Passwort-Modus ausgeblendet.
+
+In der **Ressourcensicht** zeigt jede Agentenzeile zusätzlich einen Button
+**„Login"** (nur im Passwort-Modus und nur für Admins). Er öffnet einen Dialog,
+der den Login aus dem Agentennamen vorschlägt (`vorname.nachname`, überschreibbar)
+und die groben RBAC-Rollen auswählen lässt. Nach dem Anlegen zeigt der Client das
+**Initialpasswort einmalig** an (zur sicheren Weitergabe); die Person vergibt
+beim ersten Login ihr eigenes Passwort. Der Button ruft `POST /users` mit
+`agent_id` und `display_name` auf.
+
+### 11.6 Teststrategie
+
+`core/tests/test_auth_password.py`: scrypt-Roundtrip und Manipulationsschutz,
+`suggest_login` (Umlaute/Kollisionen), `CredentialStore`-CRUD, Session-
+Lebenszyklus (Login/Authentifizierung/Ablauf/Logout), Passwortänderung
+inkl. Policy, Provisionierung samt Initialpasswort, Admin-Bootstrap, die
+Provisionierung eines Logins aus einem Agenten (Ressourcensicht „Login anlegen",
+Name-Auflösung über `agent_id`) sowie die `/auth/*`- und `/users`-Endpunkte
+(inkl. 401/403/404).

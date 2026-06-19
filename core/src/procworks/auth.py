@@ -122,4 +122,8 @@ def create_auth_backend() -> AuthBackend:
         from procworks.auth_token import TokenAuthBackend
 
         return TokenAuthBackend.from_env()
+    if mode == "password":
+        from procworks.auth_password import PasswordAuthBackend
+
+        return PasswordAuthBackend.from_env()
     return OpenAuthBackend()

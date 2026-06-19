@@ -55,6 +55,18 @@ Auth-Konzept Variante C). Hinweise für den produktiven Betrieb:
   (JSON-Datei) bereitstellen. Tokens werden nur als SHA-256-Digest gehalten.
   Die Token-Datei gehört nicht ins Repository und sollte restriktive
   Dateirechte erhalten.
+- **Passwort-Login** (`PROCWORKS_AUTH=password`) für Deployments ohne externen
+  IdP: Zugangsdaten liegen in einem separaten `CredentialStore` (nicht im
+  Modell). Passwörter werden mit `hashlib.scrypt` pro Nutzer gesalzen gehasht
+  und konstant-zeitlich verglichen; Klartext wird nie gespeichert. Login-
+  Sessions sind opake Bearer-Token, nur als SHA-256-Digest im Speicher
+  gehalten (Neustart erzwingt erneutes Login). Neue Nutzer erhalten ein
+  zufälliges Initialpasswort mit erzwungener Änderung beim ersten Login
+  (min. 8 Zeichen, ungleich dem alten). Der Initial-Admin wird über
+  `PROCWORKS_ADMIN_LOGIN`/`PROCWORKS_ADMIN_PASSWORD` provisioniert – diese
+  Variablen als Secrets behandeln und nach dem ersten Login-/Passwortwechsel
+  nicht dauerhaft im Klartext halten. Session-Dauer über
+  `PROCWORKS_SESSION_TTL_MINUTES`.
 - **CORS** über `PROCWORKS_CORS_ORIGINS` (kommagetrennt) auf die tatsächlich
   erlaubten Ursprünge einschränken; der Default `*` ist nur für die Entwicklung.
 - Die handelnde Bearbeiter-Identität wird bei `complete`/`decide` aus dem

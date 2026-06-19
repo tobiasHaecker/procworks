@@ -29,11 +29,12 @@
       <label class="api-field">API
         <input id="api-base" type="text" spellcheck="false" />
       </label>
-      <label class="api-field">Token
+      <label class="api-field" id="token-field">Token
         <input id="auth-token" type="password" spellcheck="false" autocomplete="off"
                placeholder="Bearer-Token (optional)" />
       </label>
       <div id="auth-user" class="muted">Modus: offen (kein Login)</div>
+      <button id="logout-btn" class="btn ghost small" style="display:none">Abmelden</button>
       <div class="muted">Die GUI ist ein reiner Web-Client &ndash; alle Korrektheits&shy;entscheidungen trifft der Kern.</div>
     </div>
   </aside>
@@ -52,6 +53,7 @@
 
 <div id="modal-root"></div>
 <div id="toast-root" class="toast-root"></div>
+<div id="auth-overlay" class="auth-overlay" style="display:none"></div>
 
 <script src="app.js"></script>
 </body>

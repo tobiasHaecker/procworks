@@ -37,8 +37,15 @@ from procworks.audit import (
 )
 from procworks.auth import (
     AuthError,
+    OpenAuthBackend,
     Principal,
     create_auth_backend,
+)
+from procworks.auth_password import (
+    PasswordAuthBackend,
+    PasswordPolicyError,
+    UserView,
+    user_view,
 )
 from procworks.bpmn import BpmnError
 from procworks.execution import ExecutionError
@@ -142,6 +149,45 @@ _run = Depends(require_role("operator", "admin"))
 _admin = Depends(require_role("admin"))
 
 
+def _auth_mode() -> str:
+    """Report the active auth backend kind for the client's login UI."""
+
+    if isinstance(_auth_backend, PasswordAuthBackend):
+        return "password"
+    if isinstance(_auth_backend, OpenAuthBackend):
+        return "open"
+    return "token"
+
+
+def _password_backend() -> PasswordAuthBackend:
+    """Return the active password backend or 404 when password login is off."""
+
+    if not isinstance(_auth_backend, PasswordAuthBackend):
+        raise HTTPException(status_code=404, detail="password login is not enabled")
+    return _auth_backend
+
+
+def _find_agent_name(agent_id: str) -> str | None:
+    """Best-effort lookup of an agent's display name across all known models.
+
+    Scans the shared org registry and every (hydrated) schema's org model, so a
+    user can be provisioned from an existing agent regardless of where that
+    agent is modelled.
+    """
+
+    for org_id in _org_store.list_ids():
+        org = _org_store.get(org_id)
+        if org is not None and agent_id in org.agents:
+            return org.agents[agent_id].name
+    for schema_id in _store.list_ids():
+        schema = _get_or_404(schema_id)
+        agents = (schema.org_model or OrgModel()).agents
+        if agent_id in agents:
+            return agents[agent_id].name
+    return None
+
+
+
 def _resolve_acting_agent(principal: Principal, requested: str | None) -> str | None:
     """Pick the acting agent id, never trusting the request body over identity.
 
@@ -183,6 +229,45 @@ def _record_completion(before: ProcessInstance, after: ProcessInstance) -> None:
 
 
 # --- request models ------------------------------------------------------
+
+
+class AuthConfig(BaseModel):
+    mode: str = Field(..., examples=["password"])
+    password_login: bool = False
+
+
+class LoginRequest(BaseModel):
+    login: str = Field(..., examples=["erika.musterfrau"])
+    password: str = Field(..., examples=["geheim"])
+
+
+class LoginResponse(BaseModel):
+    token: str
+    principal: Principal
+    must_change: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class CreateUserRequest(BaseModel):
+    roles: list[str] = Field(..., examples=[["operator"]])
+    agent_id: str | None = Field(default=None, examples=["a1"])
+    login: str | None = Field(default=None, examples=["erika.musterfrau"])
+    display_name: str | None = Field(default=None, examples=["Erika Musterfrau"])
+
+
+class CreateUserResponse(BaseModel):
+    user: UserView
+    login: str
+    initial_password: str
+
+
+class ResetPasswordResponse(BaseModel):
+    login: str
+    initial_password: str
 
 
 class CreateSchemaRequest(BaseModel):
@@ -520,6 +605,123 @@ def get_me(principal: Principal = Depends(get_principal)) -> Principal:
     """Return the verified identity of the caller (for the client's login UI)."""
 
     return principal
+
+
+@app.get("/auth/config", response_model=AuthConfig)
+def get_auth_config() -> AuthConfig:
+    """Public: tell the client which login UI to render (open/token/password)."""
+
+    mode = _auth_mode()
+    return AuthConfig(mode=mode, password_login=mode == "password")
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def post_login(req: LoginRequest) -> LoginResponse:
+    """Exchange username + password for a session bearer token (password mode)."""
+
+    backend = _password_backend()
+    try:
+        result = backend.login(req.login, req.password)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=401, detail=exc.message, headers={"WWW-Authenticate": "Bearer"}
+        ) from exc
+    return LoginResponse(
+        token=result.token,
+        principal=result.principal,
+        must_change=result.must_change,
+    )
+
+
+@app.post("/auth/logout", status_code=204)
+def post_logout(request: Request) -> Response:
+    """Invalidate the caller's current session token (password mode)."""
+
+    backend = _password_backend()
+    backend.logout(request.headers.get("Authorization"))
+    return Response(status_code=204)
+
+
+@app.post("/auth/change-password", status_code=204)
+def post_change_password(
+    req: ChangePasswordRequest,
+    principal: Principal = Depends(get_principal),
+) -> Response:
+    """Self-service password change; clears the forced-change flag."""
+
+    backend = _password_backend()
+    try:
+        backend.change_password(
+            principal.subject, req.current_password, req.new_password
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=exc.message) from exc
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.get("/users", response_model=list[UserView], dependencies=[_admin])
+def list_users() -> list[UserView]:
+    """List login users (admin only); never exposes password hashes."""
+
+    backend = _password_backend()
+    return [user_view(u) for u in backend.store.list_users()]
+
+
+@app.post("/users", response_model=CreateUserResponse, status_code=201, dependencies=[_admin])
+def create_user(req: CreateUserRequest) -> CreateUserResponse:
+    """Provision a login from an agent; returns the initial password once (admin)."""
+
+    backend = _password_backend()
+    display_name = req.display_name
+    if display_name is None and req.agent_id is not None:
+        display_name = _find_agent_name(req.agent_id)
+    subject = req.login or display_name or req.agent_id
+    if not subject:
+        raise HTTPException(
+            status_code=400, detail="need login, display_name or agent_id"
+        )
+    try:
+        user, initial_password = backend.create_user(
+            subject=subject,
+            roles=req.roles,
+            agent_id=req.agent_id,
+            login=req.login,
+            display_name=display_name,
+        )
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CreateUserResponse(
+        user=user_view(user),
+        login=user.login,
+        initial_password=initial_password,
+    )
+
+
+@app.post(
+    "/users/{login}/reset-password",
+    response_model=ResetPasswordResponse,
+    dependencies=[_admin],
+)
+def reset_user_password(login: str) -> ResetPasswordResponse:
+    """Set a fresh initial password (forces change); returns it once (admin)."""
+
+    backend = _password_backend()
+    try:
+        initial_password = backend.reset_password(login)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="user not found") from exc
+    return ResetPasswordResponse(login=login, initial_password=initial_password)
+
+
+@app.delete("/users/{login}", status_code=204, dependencies=[_admin])
+def delete_user(login: str) -> Response:
+    """Remove a login user (admin only)."""
+
+    backend = _password_backend()
+    backend.store.delete_user(login)
+    return Response(status_code=204)
 
 
 @app.get("/schemas", dependencies=[_read])

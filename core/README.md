@@ -210,6 +210,31 @@ Person. Die handelnde Bearbeiter-Identität wird bei `complete`/`decide` aus dem
 Token abgeleitet (Impersonation-Schutz); die feingranulare BZR-Eignungsprüfung
 im Kern bleibt unverändert aktiv. Details: [`../docs/Auth-Konzept.md`](../docs/Auth-Konzept.md).
 
+#### Passwort-Login ohne externen IdP
+
+Für eigenständige Deployments gibt es ein selbstständiges Passwort-Login
+(`PROCWORKS_AUTH=password`). Zugangsdaten liegen in einem separaten
+`CredentialStore` (bei gesetzter `DATABASE_URL` persistent, sonst im Speicher) –
+getrennt vom Agenten-/Org-Modell. Damit überhaupt jemand Nutzer anlegen kann,
+wird beim Start ein Initial-Admin provisioniert:
+
+```powershell
+$env:PROCWORKS_AUTH="password"
+$env:PROCWORKS_ADMIN_LOGIN="admin"
+$env:PROCWORKS_ADMIN_PASSWORD="bitte-aendern"
+$env:PROCWORKS_SESSION_TTL_MINUTES="720"   # optional, Default 12 h
+```
+
+Der Login-Name wird aus dem Agentennamen vorgeschlagen (`vorname.nachname`).
+Beim ersten Login verlangt die Login-Seite ein eigenes Passwort (min. 8 Zeichen);
+danach ist man direkt angemeldet. Passwörter werden mit `hashlib.scrypt`
+gesalzen gehasht (keine zusätzliche Abhängigkeit), Sessions sind opake
+Bearer-Token. Admin-Verwaltung über `POST /users`,
+`POST /users/{login}/reset-password` und `DELETE /users/{login}`. Im Web-Client
+bietet die Ressourcensicht je Agent einen Button „Login" (nur Admin), der genau
+diese Provisionierung auslöst und das Initialpasswort einmalig anzeigt. Details:
+[`../docs/Auth-Konzept.md`](../docs/Auth-Konzept.md) (Abschnitt 11).
+
 ## Web-Client starten
 
 Der Web-Client unter [`../web/`](../web/) ist ein reiner No-Build-Client und

@@ -9,6 +9,25 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- Passwort-Login für eigenständige Deployments ohne externen Identity-Provider
+  (Auth-Konzept Abschnitt 11): drittes `AuthBackend` `PasswordAuthBackend`
+  (`PROCWORKS_AUTH=password`). Login-Name wird aus dem Agentennamen vorgeschlagen
+  (`vorname.nachname`, Umlaut-Transliteration, Kollisions-Suffix) und in einem
+  separaten `CredentialStore` (`InMemoryCredentialStore`/`SqlAlchemyCredential‐
+  Store`) gehalten – getrennt vom Agenten-/Org-Modell. Passwörter werden mit
+  `hashlib.scrypt` (Standardbibliothek, kein neues Paket) gesalzen gehasht;
+  Sessions sind opake Bearer-Token (nur als SHA-256-Digest im Speicher).
+  Initialpasswort mit erzwungener Änderung beim ersten Login; danach direkter
+  Login. Neue Endpunkte `GET /auth/config`, `POST /auth/login`,
+  `POST /auth/change-password`, `POST /auth/logout` sowie Admin-Verwaltung
+  `GET/POST /users`, `POST /users/{login}/reset-password`,
+  `DELETE /users/{login}`. Initial-Admin-Bootstrap über `PROCWORKS_ADMIN_LOGIN`
+  /`PROCWORKS_ADMIN_PASSWORD`, Session-Dauer über
+  `PROCWORKS_SESSION_TTL_MINUTES`. Migration `0005_user_credential`. Web-Client:
+  Vollbild-Login auf der Index-Seite, erzwungene Passwortvergabe, „Passwort
+  ändern" und „Abmelden" in der Seitenleiste sowie in der Ressourcensicht je
+  Agentenzeile ein Button „Login" (nur Admin/Passwort-Modus), der den Login aus
+  dem Agentennamen vorschlägt und das Initialpasswort einmalig anzeigt.
 - Authentifizierung & rollenbasierte Zugriffskontrolle (Auth-Konzept Variante C):
   austauschbarer `AuthBackend` (analog `SchemaStore`) mit Standard-Modus „offen"
   (`OpenAuthBackend`, Entwicklung) und Token-Backend (`TokenAuthBackend`, gegen
