@@ -552,6 +552,8 @@ docker compose -f deploy/docker-compose.full.yml up --build
 
 - **Windows Server (Erstinstallation von Grund auf):** Schritt-für-Schritt-
   Anleitung unter [`../docs/Windows-Server-Setup.md`](../docs/Windows-Server-Setup.md).
+- **Mitarbeiter-Anleitung (Anmelden + Aufgaben bearbeiten):** zum Weitergeben
+  unter [`../docs/Mitarbeiter-Anleitung.md`](../docs/Mitarbeiter-Anleitung.md).
 - **Container:** [`Dockerfile`](Dockerfile) (API; Migrationen beim Start via
   `docker-entrypoint.sh`, dann Uvicorn, non-root, Healthcheck) und
   [`../web/Dockerfile`](../web/Dockerfile) (Web + Caddy).
