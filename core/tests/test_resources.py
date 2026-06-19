@@ -12,7 +12,9 @@ from procworks import (
     assign_staff_rule,
     create_empty_schema,
     parallel_insert,
+    release,
     serial_insert,
+    update_agent,
     validate,
 )
 from procworks.model import StaffRule, StaffRuleKind
@@ -163,3 +165,85 @@ def test_except_rule_upper_bound_resolvable():
     )
     schema = assign_staff_rule(schema, act, rule)
     assert validate(schema) == []
+
+
+def test_update_agent_changes_name_roles_and_unit():
+    schema = create_empty_schema("Update", schema_id="upd")
+    schema = add_role(schema, "Sachbearbeiter", role_id="sb")
+    schema = add_role(schema, "Manager", role_id="mgr")
+    schema = add_org_unit(schema, "Einkauf", org_unit_id="einkauf")
+    schema = add_agent(schema, "Erika", role_ids=["sb"], agent_id="a1")
+
+    schema = update_agent(
+        schema, "a1", name="Erika Mustermann", role_ids=["mgr"], org_unit_id="einkauf"
+    )
+
+    agent = schema.org_model.agents["a1"]
+    assert agent.name == "Erika Mustermann"
+    assert agent.role_ids == ["mgr"]
+    assert agent.org_unit_id == "einkauf"
+    assert validate(schema) == []
+
+
+def test_update_agent_keeps_unspecified_fields():
+    schema = create_empty_schema("Keep", schema_id="keep")
+    schema = add_role(schema, "Sachbearbeiter", role_id="sb")
+    schema = add_org_unit(schema, "Einkauf", org_unit_id="einkauf")
+    schema = add_agent(
+        schema, "Erika", role_ids=["sb"], org_unit_id="einkauf", agent_id="a1"
+    )
+
+    schema = update_agent(schema, "a1", name="Erika M.")
+
+    agent = schema.org_model.agents["a1"]
+    assert agent.name == "Erika M."
+    assert agent.role_ids == ["sb"]  # left untouched
+    assert agent.org_unit_id == "einkauf"  # KEEP sentinel -> unchanged
+
+
+def test_update_agent_can_detach_org_unit():
+    schema = create_empty_schema("Detach", schema_id="detach")
+    schema = add_org_unit(schema, "Einkauf", org_unit_id="einkauf")
+    schema = add_agent(schema, "Erika", org_unit_id="einkauf", agent_id="a1")
+
+    schema = update_agent(schema, "a1", org_unit_id=None)
+
+    assert schema.org_model.agents["a1"].org_unit_id is None
+
+
+def test_update_agent_unknown_agent_is_rejected():
+    schema = create_empty_schema("NoAgent", schema_id="noagent")
+    with pytest.raises(CorrectnessError) as exc:
+        update_agent(schema, "ghost", name="X")
+    assert any(f.rule == "OP" for f in exc.value.findings)
+
+
+def test_update_agent_unknown_role_is_rejected():
+    schema = create_empty_schema("BadRole", schema_id="badrole")
+    schema = add_agent(schema, "Erika", agent_id="a1")
+    with pytest.raises(CorrectnessError) as exc:
+        update_agent(schema, "a1", role_ids=["does_not_exist"])
+    assert any(f.rule == "OP" for f in exc.value.findings)
+
+
+def test_update_agent_requires_draft():
+    schema = create_empty_schema("Released", schema_id="rel")
+    schema = serial_insert(schema, "Bearbeiten", after_node_id="start")
+    schema = add_agent(schema, "Erika", agent_id="a1")
+    schema = release(schema)
+    with pytest.raises(CorrectnessError) as exc:
+        update_agent(schema, "a1", name="Neu")
+    assert any(f.rule == "R0" for f in exc.value.findings)
+
+
+def test_update_agent_rejects_role_removal_breaking_staff_rule():
+    schema = create_empty_schema("Z2update", schema_id="z2upd")
+    schema = serial_insert(schema, "Bearbeiten", after_node_id="start")
+    act = _activity_ids(schema, "Bearbeiten")[0]
+    schema = add_role(schema, "Sachbearbeiter", role_id="sb")
+    schema = add_agent(schema, "Erika", role_ids=["sb"], agent_id="a1")
+    schema = assign_staff_rule(schema, act, _role_rule("sb"))
+    # Removing the only holder of "sb" leaves the staff rule unresolvable (Z2).
+    with pytest.raises(CorrectnessError) as exc:
+        update_agent(schema, "a1", role_ids=[])
+    assert any(f.rule == "Z2" for f in exc.value.findings)

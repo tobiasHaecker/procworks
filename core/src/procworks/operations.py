@@ -516,6 +516,58 @@ def set_agent_deputy(
     return raise_if_invalid(candidate)
 
 
+class _KeepSentinel:
+    """Marker meaning 'leave this field unchanged' in a partial update."""
+
+
+KEEP = _KeepSentinel()
+
+
+def update_agent(
+    schema: ProcessSchema,
+    agent_id: str,
+    *,
+    name: str | None = None,
+    role_ids: list[str] | None = None,
+    org_unit_id: str | None | _KeepSentinel = KEEP,
+) -> ProcessSchema:
+    """Update an existing agent's master data (name, roles, org unit).
+
+    Only the provided fields change: ``name`` / ``role_ids`` left at ``None``
+    keep their current value, and ``org_unit_id`` defaults to the ``KEEP``
+    sentinel (pass ``None`` explicitly to detach the agent from its org unit).
+    The agent id and deputy are untouched -- use ``set_agent_deputy`` for the
+    latter. Editing the actor catalogue is a structural change, so the schema
+    must be in ENTWURF (R0); referenced roles / the org unit must exist and the
+    result is validated (Z1-Z4), e.g. removing a role still required by a staff
+    rule is rejected.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    agent = candidate.org_model.agents.get(agent_id)
+    if agent is None:
+        raise CorrectnessError(
+            [ValidationFinding(rule="OP", message=f"agent '{agent_id}' does not exist")]
+        )
+    if name is not None:
+        agent.name = name
+    if role_ids is not None:
+        for role_id in role_ids:
+            if role_id not in candidate.org_model.roles:
+                raise CorrectnessError(
+                    [ValidationFinding(rule="OP", message=f"role '{role_id}' does not exist")]
+                )
+        agent.role_ids = role_ids
+    if not isinstance(org_unit_id, _KeepSentinel):
+        if org_unit_id is not None and org_unit_id not in candidate.org_model.org_units:
+            raise CorrectnessError(
+                [ValidationFinding(rule="OP", message=f"org unit '{org_unit_id}' does not exist")]
+            )
+        agent.org_unit_id = org_unit_id
+    return raise_if_invalid(candidate)
+
+
 def add_activity_template(
     schema: ProcessSchema,
     name: str,

@@ -174,6 +174,12 @@ class AddAgentRequest(BaseModel):
     deputy_id: str | None = Field(default=None, examples=["a2"])
 
 
+class UpdateAgentRequest(BaseModel):
+    name: str | None = Field(default=None, examples=["Erika Mustermann"])
+    role_ids: list[str] | None = Field(default=None, examples=[["sb"]])
+    org_unit_id: str | None = Field(default=None, examples=["einkauf"])
+
+
 class SetManagerRequest(BaseModel):
     manager_id: str | None = Field(default=None, examples=["a1"])
 
@@ -524,6 +530,20 @@ def post_add_agent(schema_id: str, req: AddAgentRequest) -> ProcessSchema:
     return _commit_or_422(
         lambda: ops.add_agent(
             schema, req.name, req.role_ids, req.org_unit_id, req.agent_id, req.deputy_id
+        )
+    )
+
+
+@app.patch("/schemas/{schema_id}/agents/{agent_id}", response_model=ProcessSchema)
+def patch_update_agent(
+    schema_id: str, agent_id: str, req: UpdateAgentRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    # Distinguish "org_unit_id omitted" (keep) from "org_unit_id: null" (detach).
+    org_unit = req.org_unit_id if "org_unit_id" in req.model_fields_set else ops.KEEP
+    return _commit_or_422(
+        lambda: ops.update_agent(
+            schema, agent_id, name=req.name, role_ids=req.role_ids, org_unit_id=org_unit
         )
     )
 

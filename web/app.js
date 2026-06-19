@@ -160,6 +160,7 @@ async function request(method, path, body) {
 const api = {
   get: (p) => request("GET", p),
   post: (p, b) => request("POST", p, b === undefined ? {} : b),
+  patch: (p, b) => request("PATCH", p, b === undefined ? {} : b),
   del: (p) => request("DELETE", p),
   raw: async (p) => {
     const resp = await fetch(state.apiBase + p);
@@ -743,8 +744,10 @@ function agentListPanel(org, draft) {
       const roles = (a.role_ids || []).map((r) => org.roles[r] ? org.roles[r].name : r).join(", ") || "\u2013";
       const unit = a.org_unit_id && org.org_units[a.org_unit_id] ? org.org_units[a.org_unit_id].name : "\u2013";
       const dep = a.deputy_id && org.agents[a.deputy_id] ? org.agents[a.deputy_id].name : "\u2013";
-      const editBtn = el("button", { class: "btn small", onClick: () => editDeputy(a) }, "Vertreter");
-      return [a.name, roles, unit, dep, editBtn];
+      const editBtn = el("button", { class: "btn small", onClick: () => editAgent(a), disabled: !draft }, "Bearbeiten");
+      const depBtn = el("button", { class: "btn small", onClick: () => editDeputy(a) }, "Vertreter");
+      const actions = el("div", { style: "display:flex; gap:6px; justify-content:flex-end" }, editBtn, depBtn);
+      return [a.name, roles, unit, dep, actions];
     });
     body.appendChild(table(["Agent", "Rollen", "Abteilung", "Vertreter", ""], rows));
   }
@@ -849,6 +852,30 @@ function editManager(unit) {
   if (unit.manager_id) sel.value = unit.manager_id;
   openModal(`Vorgesetzter: ${unit.name}`, el("label", { class: "field" }, "Vorgesetzter", sel), async () => {
     try { await api.post(`/schemas/${state.schemaId}/org-units/${unit.id}/manager`, { manager_id: sel.value || null }); await refreshSchema(); render(); toast("ok", "Vorgesetzter gesetzt"); }
+    catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Speichern");
+}
+
+function editAgent(agent) {
+  const org = state.schema.org_model;
+  const name = el("input", { type: "text", value: agent.name });
+  const roleSel = el("select", { multiple: "multiple", size: Math.min(5, Math.max(1, Object.keys(org.roles).length)) },
+    ...Object.values(org.roles).map((r) => {
+      const o = el("option", { value: r.id }, r.name);
+      if ((agent.role_ids || []).includes(r.id)) o.selected = true;
+      return o;
+    }));
+  const unitSel = el("select", null, el("option", { value: "" }, "\u2013 keine \u2013"),
+    ...Object.values(org.org_units || {}).map((u) => el("option", { value: u.id }, u.name)));
+  unitSel.value = agent.org_unit_id || "";
+  openModal(`Agent bearbeiten: ${agent.name}`, el("div", null,
+    el("label", { class: "field" }, "Name", name),
+    el("label", { class: "field", style: "margin-top:10px" }, "Rollen (Mehrfachauswahl)", roleSel),
+    el("label", { class: "field", style: "margin-top:10px" }, "Abteilung", unitSel)), async () => {
+    if (!name.value.trim()) return false;
+    const roleIds = [...roleSel.selectedOptions].map((o) => o.value);
+    const payload = { name: name.value.trim(), role_ids: roleIds, org_unit_id: unitSel.value || null };
+    try { await api.patch(`/schemas/${state.schemaId}/agents/${agent.id}`, payload); await refreshSchema(); render(); toast("ok", "Agent gespeichert"); }
     catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Speichern");
 }

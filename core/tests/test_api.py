@@ -147,6 +147,47 @@ def test_staff_rule_via_api() -> None:
     assert client.get(f"/schemas/{sid}/validation").json()["correct"] is True
 
 
+def test_update_agent_via_api() -> None:
+    sid = client.post("/schemas", json={"name": "EditAgent"}).json()["id"]
+    client.post(f"/schemas/{sid}/roles", json={"name": "Sachbearbeiter", "role_id": "sb"})
+    client.post(f"/schemas/{sid}/roles", json={"name": "Manager", "role_id": "mgr"})
+    client.post(
+        f"/schemas/{sid}/org-units", json={"name": "Einkauf", "org_unit_id": "einkauf"}
+    )
+    client.post(
+        f"/schemas/{sid}/agents",
+        json={
+            "name": "Erika",
+            "role_ids": ["sb"],
+            "org_unit_id": "einkauf",
+            "agent_id": "a1",
+        },
+    )
+
+    # Rename + change roles; org unit omitted -> kept.
+    resp = client.patch(
+        f"/schemas/{sid}/agents/a1",
+        json={"name": "Erika Mustermann", "role_ids": ["mgr"]},
+    )
+    assert resp.status_code == 200
+    agent = resp.json()["org_model"]["agents"]["a1"]
+    assert agent["name"] == "Erika Mustermann"
+    assert agent["role_ids"] == ["mgr"]
+    assert agent["org_unit_id"] == "einkauf"
+
+    # Explicit null detaches the org unit.
+    resp = client.patch(f"/schemas/{sid}/agents/a1", json={"org_unit_id": None})
+    assert resp.status_code == 200
+    assert resp.json()["org_model"]["agents"]["a1"]["org_unit_id"] is None
+
+
+def test_update_unknown_agent_returns_422() -> None:
+    sid = client.post("/schemas", json={"name": "EditNoAgent"}).json()["id"]
+    resp = client.patch(f"/schemas/{sid}/agents/ghost", json={"name": "X"})
+    assert resp.status_code == 422
+    assert "findings" in resp.json()["detail"]
+
+
 def test_staff_rule_unknown_role_returns_422() -> None:
     sid = client.post("/schemas", json={"name": "BZRbad"}).json()["id"]
     schema = client.post(

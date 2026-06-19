@@ -120,6 +120,7 @@ from procworks.operations import (
     set_org_unit_parent,
     set_subprocess_mapping,
     unlink_follow_up,
+    update_agent,
 )
 from procworks.validator import CorrectnessError, ValidationFinding, validate
 
@@ -216,6 +217,7 @@ __all__ = [
     "set_subprocess_mapping",
     "start_activity",
     "unlink_follow_up",
+    "update_agent",
     "worklist",
     "CorrectnessError",
     "ExecutionContext",
