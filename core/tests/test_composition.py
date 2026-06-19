@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for the composition rules H1-H4 (sub-processes) and F1-F3 (follow-ups).
 
 A sub-process or follow-up may only reference a RELEASED target with a

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Activity Repository correctness tests (rules A1-A3, Section 6).
 
 A template carries a typed I/O interface and an executor. Binding a template to

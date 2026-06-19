@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Schema store interface, in-memory implementation, and a store factory.
 
 The API depends only on the ``SchemaStore`` protocol, so the backing store can

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 # Reverse proxy + TLS + static web serving for ProcWorks (roadmap step 16).
 #
 # Caddy serves the SPA static assets from /srv and reverse-proxies the API under

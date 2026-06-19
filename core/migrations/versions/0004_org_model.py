@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """org_model table for shared, cross-schema organisation models
 
 Revision ID: 0004_org_model

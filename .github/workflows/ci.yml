@@ -45,3 +45,39 @@ jobs:
 
       - name: Test (pytest)
         run: pytest -q
+
+  license-scan:
+    name: Dependency License Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: core/pyproject.toml
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+          python -m pip install pip-licenses
+
+      - name: Report dependency licenses
+        run: pip-licenses --with-system --order=license --format=markdown
+
+      # Fail the build if any (transitive) dependency ships under a strong
+      # copyleft licence. ProcWorks must stay clear of GPL/AGPL obligations so
+      # the BUSL-1.1 distribution cannot be challenged. The optional psycopg
+      # (LGPL-3.0) extra is intentionally NOT installed here and is documented
+      # in THIRD-PARTY-NOTICES.md as a dynamically linked, unmodified exception.
+      - name: Fail on strong copyleft (GPL/AGPL)
+        run: >
+          pip-licenses --with-system
+          --fail-on "GNU General Public License v2 (GPLv2);GNU General Public License v3 (GPLv3);GNU General Public License (GPL);GNU Affero General Public License v3;GNU Affero General Public License v3 or later (AGPLv3+);GNU Lesser General Public License v3 (LGPLv3);GNU Lesser General Public License v3 or later (LGPLv3+)"

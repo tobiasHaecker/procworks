@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """PostgreSQL persistence via SQLAlchemy (roadmap step 4).
 
 A process schema is stored as a JSON(B) document plus queryable columns

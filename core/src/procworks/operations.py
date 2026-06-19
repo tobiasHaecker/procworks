@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """High-level change operations (Section 7).
 
 These are the *only* way to mutate a schema. Each operation:

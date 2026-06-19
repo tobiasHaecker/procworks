@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """BPMN 2.0 import/export tests (roadmap step 14, Section 2.3).
 
 Export maps the block-structured schema onto semantic BPMN; import maps it back

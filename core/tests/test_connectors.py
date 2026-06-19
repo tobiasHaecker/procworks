@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Data connector correctness + Data Access Layer tests (Section 9, step 12).
 
 An EXTERNAL data element is resolved through a registered connector. Binding it

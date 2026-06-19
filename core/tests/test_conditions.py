@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for the safe boolean condition evaluator.
 
 The evaluator parses a restricted Python expression grammar (comparisons,

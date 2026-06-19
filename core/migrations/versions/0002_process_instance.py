@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """process_instance table for durable instance persistence
 
 Revision ID: 0002_process_instance

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for the Execution Engine (roadmap step 8).
 
 These verify the runtime marking semantics: a RELEASED schema is instantiated,

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Persistence tests for the SQLAlchemy store (using a SQLite file backend).
 
 These verify round-tripping of a schema (including a nested XOR block) and the

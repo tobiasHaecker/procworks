@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Static bearer-token auth backend (first production-grade backend).
 
 Tokens and their identity/roles are configured out-of-band in a JSON file

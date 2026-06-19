@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Shared, standalone organisation models (cross-schema master data).
 
 An :class:`~procworks.model.OrgModel` can be embedded in a single schema (the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Shared, cross-schema organisation models (rule Z1 master data + reuse)."""
 
 from __future__ import annotations

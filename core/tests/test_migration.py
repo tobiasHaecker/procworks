@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for schema evolution + instance migration (roadmap step 11, M1-M5).
 
 A new schema revision (``new_revision``) keeps every element id, so a running

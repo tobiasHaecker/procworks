@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Alembic migration environment for procworks."""
 
 from __future__ import annotations

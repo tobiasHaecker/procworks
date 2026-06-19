@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Audit/Event Log and monitoring aggregation (roadmap step 15).
 
 The execution core stays pure: runtime events are recorded at the API boundary

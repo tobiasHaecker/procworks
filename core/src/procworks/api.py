@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Headless HTTP API (FastAPI) for the procworks kernel.
 
 This is the single entry point to the domain core (Section 5.4, API-first):

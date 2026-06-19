@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """auth_user table for the password login backend
 
 Revision ID: 0005_user_credential

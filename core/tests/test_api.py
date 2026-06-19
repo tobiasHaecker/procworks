@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """API tests using FastAPI's TestClient (httpx-based)."""
 
 from __future__ import annotations

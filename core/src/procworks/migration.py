@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Schema evolution and instance migration (roadmap step 11, M1-M5).
 
 When a new schema revision is released, each running instance is checked

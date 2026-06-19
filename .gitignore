@@ -32,3 +32,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Urheberrechtlich geschützte Quellmaterialien (z. B. Forschungs-PDFs der
+# zitierten Literatur) und daraus extrahierte Texte dürfen NIE eingecheckt
+# werden – ProcWorks übernimmt nur Konzepte, keinen geschützten Volltext.
+*.pdf
+*.extracted.txt
+*.extract.txt

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """initial schema: process_schema table
 
 Revision ID: 0001_initial

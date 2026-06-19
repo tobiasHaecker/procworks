@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for runtime staff resolution and the agent task list (Bearbeiter-Aufgabenliste).
 
 These cover the concrete (runtime) resolution of staff rules against a running

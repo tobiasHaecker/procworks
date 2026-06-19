@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """audit_event table for durable event-log persistence
 
 Revision ID: 0003_audit_event

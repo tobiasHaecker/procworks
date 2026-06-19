@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BUSL-1.1
 "use strict";
 
 /* ProcWorks - schlanker Web-Client (Roadmap-Schritt 13, Abschnitt 8).

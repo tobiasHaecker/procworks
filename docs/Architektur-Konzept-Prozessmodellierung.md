@@ -898,12 +898,18 @@ freier Weiterverkauf als Konkurrenzprodukt).
   - Kurzer Lizenz-/Haftungshinweis in `README.md` und – da externe Connectoren
     genutzt werden – eine `NOTICE`/`THIRD-PARTY-LICENSES`-Datei, die die Lizenzen
     der eingebundenen Open-Source-Abhängigkeiten auflistet.
-- **Lizenzkompatibilität der Abhängigkeiten:** Es werden ausschließlich
+- **Lizenzkompatibilität der Abhängigkeiten:** Es werden weit überwiegend
   Abhängigkeiten mit **permissiven** Lizenzen (MIT, Apache-2.0, BSD, ISC,
   PostgreSQL …) verwendet; ein automatisierter **License-Check** (siehe 10.4)
-  verhindert die versehentliche Aufnahme inkompatibler (z. B. strikt copyleft,
+  verhindert die versehentliche Aufnahme **strikt copyleft** lizenzierter (z. B.
   GPL/AGPL) Komponenten. Permissive Abhängigkeiten dürfen problemlos in das
-  BUSL-lizenzierte Gesamtwerk eingebunden werden.
+  BUSL-lizenzierte Gesamtwerk eingebunden werden. **Einzige Ausnahme** ist der
+  **optionale** PostgreSQL-Treiber `psycopg` (LGPL-3.0, schwaches Copyleft): er
+  wird **unverändert** als eigenständige, dynamisch importierte und austauschbare
+  Bibliothek genutzt (kein abgeleitetes Werk, kein Copyleft-Übergriff auf den
+  ProcWorks-Code) und ist nur im `postgres`-Extra enthalten – der In-Memory-Store
+  benötigt keinen Treiber. Eine vollständige Auflistung aller Drittlizenzen liegt
+  in [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md).
 - **Spätere kommerzielle Verwertung absichern:** Die BUSL-1.1 reserviert die
   konkurrierende kommerzielle Nutzung bereits per Lizenz dem Rechteinhaber –
   eine **kommerzielle (Dual-)Lizenz** kann jederzeit zusätzlich vergeben werden.
@@ -1029,7 +1035,7 @@ flowchart TB
 - **Kein direkter Code-Bezug zur (Java-basierten) ADEPT-Forschung.** ? Es werden ohnehin nur **Konzepte** übernommen, kein Code.
 - **Refactoring ohne statischen Compiler** ist riskanter. ? Abgefedert durch `mypy --strict` + hohe Testabdeckung.
 
-> **Open-Source-Vorgabe:** Alle gewählten Bausteine stehen unter **permissiven** Lizenzen (vgl. Abschnitt 10.1): Python (PSF), FastAPI/Pydantic/SQLAlchemy/pytest (MIT), NetworkX (BSD), PostgreSQL (PostgreSQL-Lizenz), `bpmn-js` (bpmn.io, quelloffen). Sie lassen sich frei in das BUSL-1.1-lizenzierte Gesamtwerk einbinden.
+> **Open-Source-Vorgabe:** Die gewählten Bausteine stehen unter **permissiven** Lizenzen (vgl. Abschnitt 10.1): Python (PSF), FastAPI/Pydantic/SQLAlchemy/pytest (MIT), NetworkX (BSD), PostgreSQL (PostgreSQL-Lizenz), `bpmn-js` (bpmn.io, quelloffen). Sie lassen sich frei in das BUSL-1.1-lizenzierte Gesamtwerk einbinden. Einzige Ausnahme ist der **optionale** Treiber `psycopg` (LGPL-3.0, schwaches Copyleft) – unverändert und dynamisch genutzt, daher unkritisch (Details: Abschnitt 10.1 und [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md)).
 
 **Architekturprinzip bleibt unverändert:** `bpmn-js` dient als Editor/Viewer, **nicht** als Korrektheitsinstanz – die Korrektheit verantwortet ausschließlich der eigene Python-Kern (Abschnitt 5.4, „dumme" GUI).
 

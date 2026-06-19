@@ -133,6 +133,31 @@ Richtung und Konsistenz (insbesondere die Korrektheitsinvariante) abgestimmt sin
 Die CI prüft Markdown und die Prototyp-Dateien automatisch (siehe
 [.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
+## Herkunft & Originalität
+
+ProcWorks ist eine **eigenständige, von Grund auf neu geschriebene**
+Implementierung. Es übernimmt aus der Forschung **nur Konzepte**, keinen Code:
+
+- **Kein Fremdcode eingebettet.** Es ist keine externe Bibliothek in dieses
+  Repository kopiert; Web-Client und Prototyp laden ausschließlich **lokale**
+  Erstanbieter-Dateien (kein CDN, keine gebündelten Fonts, keine fremden
+  Minified-Bundles). Abhängigkeiten werden separat von PyPI bezogen und
+  **unverändert** über ihre öffentlichen Schnittstellen genutzt.
+- **ADEPT2 / BPMN nur konzeptionell.** Die Korrektheitsideen (Blockstruktur,
+  K/D/Z/B-Kriterien, High-Level-Operationen, Markierungssemantik, Migration)
+  stammen aus **veröffentlichter Forschung** (ADEPT2, Universität Ulm) und dem
+  **offenen OMG-Standard BPMN 2.0** und sind in eigenem Python neu umgesetzt.
+  **Kein ADEPT-/AristaFlow-Quellcode** wird verwendet, kopiert oder abgeleitet.
+  Die akademischen Quellen sind in
+  [docs/Architektur-Konzept-Prozessmodellierung.md](docs/Architektur-Konzept-Prozessmodellierung.md)
+  (§15) belegt. „ADEPT" und „AristaFlow" werden ausschließlich **nennend/
+  beschreibend** zur Würdigung der zugrunde liegenden Forschung verwendet; es
+  besteht **keine** Verbindung, Partnerschaft oder Billigung durch deren Inhaber.
+- **Geschütztes Quellmaterial bleibt draußen.** Forschungs-PDFs und daraus
+  extrahierte Volltexte werden nie eingecheckt (per `.gitignore` ausgeschlossen).
+- **Drittlizenzen dokumentiert.** Alle Abhängigkeiten und ihre Lizenzen sind in
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) aufgeführt.
+
 ## Veröffentlichung
 
 Eine vollständige Schritt-für-Schritt-Anleitung zum Publizieren dieses Projekts

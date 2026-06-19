@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Unit tests for the audit log and monitoring aggregation (roadmap step 15)."""
 
 from __future__ import annotations

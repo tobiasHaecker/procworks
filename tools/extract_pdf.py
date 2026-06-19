@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 import sys
 from pypdf import PdfReader
 

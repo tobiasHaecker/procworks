@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Resource / staff-assignment correctness tests (rules Z1-Z4, Section 3.2.1)."""
 
 from __future__ import annotations

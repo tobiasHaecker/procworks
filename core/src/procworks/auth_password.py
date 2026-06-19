@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Password-based auth backend: self-contained login for standalone deployments.
 
 This is the second concrete :class:`procworks.auth.AuthBackend`. It exists so a

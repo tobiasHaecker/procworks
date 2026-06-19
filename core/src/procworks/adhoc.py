@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Ad-hoc changes on a single running instance (roadmap step 10).
 
 An ad-hoc change adapts *one* instance without touching the released schema:

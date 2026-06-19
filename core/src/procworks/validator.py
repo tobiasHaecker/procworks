@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Correctness Validator (Stufe A, structural rules K1-K3).
 
 The validator is called *before* committing any change operation (validate-

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for follow-up execution (lateral composition at runtime, F1-F4).
 
 When an instance completes, each follow-up link whose trigger fires starts a new

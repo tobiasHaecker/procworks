@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Data-flow correctness tests (rules D1-D4, Section 3.2)."""
 
 from __future__ import annotations

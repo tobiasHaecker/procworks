@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for the Correctness Validator (K1-K3) and change operations.
 
 These tests demonstrate Correctness by Construction:

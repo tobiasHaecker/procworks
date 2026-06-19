@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Safe boolean condition evaluator (roadmap step 11+, CONDITIONAL follow-ups).
 
 Conditions are short expressions over the process data values, e.g.

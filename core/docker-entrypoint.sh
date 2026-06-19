@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: BUSL-1.1
 # Entrypoint for the procworks API container.
 #
 # When DATABASE_URL is set, apply Alembic migrations before serving so the

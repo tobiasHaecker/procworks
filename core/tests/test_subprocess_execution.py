@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for sub-process execution (composition at runtime).
 
 A SUBPROCESS node spawns a child instance of its pinned target schema, passes

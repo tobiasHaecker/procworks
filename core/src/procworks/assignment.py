@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Runtime staff resolution and the per-agent task list (roadmap step 13a).
 
 The structural validator (Z1-Z3) reasons about a staff rule (BZR) at design

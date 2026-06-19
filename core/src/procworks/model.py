@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Meta-model (Pydantic) for the block-structured process schema.
 
 This mirrors Section 4 of the architecture concept: Node, ControlEdge and the

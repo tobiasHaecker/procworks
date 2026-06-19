@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Data Access Layer and connector SPI (Section 9, step 12).
 
 EXTERNAL data elements (see ``DataElement.source``) are not stored in the

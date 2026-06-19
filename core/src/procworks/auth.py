@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Pluggable authentication for the API boundary (Auth concept, Variant C).
 
 The domain core stays headless and correctness-only: fine-grained eligibility

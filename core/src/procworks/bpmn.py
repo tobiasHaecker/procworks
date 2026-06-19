@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """BPMN 2.0 import/export (Section 2.3, roadmap step 14).
 
 The internal block-structured meta-model is the single source of truth for

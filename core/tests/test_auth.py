@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Auth/RBAC tests (Auth concept "Variante C": pluggable AuthBackend).
 
 These cover the acceptance criteria from the concept's section 8:

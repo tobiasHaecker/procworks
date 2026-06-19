@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Process-Core: headless, block-structured process engine kernel.
 
 Correctness by Construction (CbC): the model can only be changed through

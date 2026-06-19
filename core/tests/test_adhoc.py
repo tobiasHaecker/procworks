@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BUSL-1.1
 """Tests for ad-hoc instance changes (roadmap step 10, rules R1/R2).
 
 An ad-hoc change adapts a single running instance through a per-instance
