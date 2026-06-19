@@ -13,7 +13,10 @@
 #   ACME_EMAIL    - contact email for the ACME/Let's Encrypt account.
 
 {
-	email {$ACME_EMAIL}
+	# A contact email is only used for ACME/Let's Encrypt in HTTPS mode. Provide a
+	# harmless placeholder default so the config still parses when ACME_EMAIL is
+	# empty/unset (e.g. local ":80" HTTP testing). A real address overrides it.
+	email {$ACME_EMAIL:admin@example.invalid}
 }
 
 {$SITE_ADDRESS::80} {

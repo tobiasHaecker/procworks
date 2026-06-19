@@ -15,15 +15,16 @@ const DEFAULT_API = "http://127.0.0.1:8000";
 
 // Behind the reverse proxy (deploy/Caddyfile) the API is reachable same-origin
 // under /api. When the page is served from a real host (not the local file://
-// or the :5500 dev static server on localhost), default to that proxied path so
-// the deployed app works without manual configuration. The local dev flow
-// (static server on :5500 -> uvicorn on :8000) keeps the 127.0.0.1:8000 default.
+// or the :5500 dev static server) default to that proxied path so the deployed
+// app — including the Docker stack on http://localhost — works without manual
+// configuration. The local dev flow serves the SPA from a static server on
+// :5500 (uvicorn separately on :8000) and keeps the 127.0.0.1:8000 default.
 function defaultApiBase() {
   try {
-    const { protocol, hostname } = window.location;
+    const { protocol, port } = window.location;
     const isFile = protocol === "file:";
-    const isLocal = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "";
-    if (!isFile && !isLocal) {
+    const isDevStatic = port === "5500";
+    if (!isFile && !isDevStatic) {
       return window.location.origin + "/api";
     }
   } catch (_e) {

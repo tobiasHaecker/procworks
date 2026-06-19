@@ -46,7 +46,9 @@ services:
       # ":80" = plain HTTP for local use. Set to your domain for automatic HTTPS.
       SITE_ADDRESS: ":80"
       API_UPSTREAM: "api:8000"
-      ACME_EMAIL: ""
+      # ACME_EMAIL is only needed for HTTPS. Leave it unset for local ":80" HTTP
+      # (the Caddyfile supplies a placeholder default); set it for production.
+      # ACME_EMAIL: "you@example.com"
     ports:
       - "80:80"
       - "443:443"
