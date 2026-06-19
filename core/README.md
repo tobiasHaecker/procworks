@@ -71,7 +71,7 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   für GUI, CLI und Fremdsysteme (Abschnitt 5.4, API-first). Eine permissive
   CORS-Middleware erlaubt dem Browser-Client den Zugriff (im lokalen Betrieb
   unbedenklich, da der Client keine Korrektheitslogik trägt).
-- **Web-Client** (`../web/`): ein schlanker **No-Build**-API-Client (reines
+- **Web-Client** (`../web/`): ein schlanker **No-Build**-Web-Client (reines
   HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Sechs
   Sichten — Modellieren (geführte +-Operationen, live validiert),
   Datensicht, Ressourcensicht (Organisation als Baumstruktur mit Abteilungen,

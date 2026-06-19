@@ -1,6 +1,6 @@
 "use strict";
 
-/* ProcWorks - schlanker API-Client (Roadmap-Schritt 13, Abschnitt 8).
+/* ProcWorks - schlanker Web-Client (Roadmap-Schritt 13, Abschnitt 8).
  *
  * Die GUI ist ein reiner Client der headless FastAPI: sie sammelt Intentionen
  * und rendert Zustand. Jede Korrektheitsentscheidung (K/D/Z/A/C/H/F/R/M)
@@ -135,7 +135,7 @@ function describeError(err) {
 }
 
 // --------------------------------------------------------------------------
-// API-Client
+// Web-Client
 // --------------------------------------------------------------------------
 
 async function request(method, path, body) {

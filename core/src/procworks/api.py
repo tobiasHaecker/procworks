@@ -55,7 +55,7 @@ app = FastAPI(
     summary="Headless, block-structured process engine kernel (Correctness by Construction).",
 )
 
-# The browser-based UI (Section 8) is a thin API client that may be served from
+# The browser-based UI (Section 8) is a thin web client that may be served from
 # a different origin (file:// or a static dev server). It holds no correctness
 # logic, so a permissive CORS policy is safe for this local kernel: every
 # request still passes the same validate-before-commit path.
