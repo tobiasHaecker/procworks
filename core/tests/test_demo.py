@@ -25,7 +25,7 @@ from procworks.auth_password import (
     hash_password,
 )
 from procworks.execution import ExecutionContext
-from procworks.model import InstanceState, LifecycleState
+from procworks.model import AccessMode, DataType, InstanceState, LifecycleState
 from procworks.store import (
     InMemoryInstanceStore,
     InMemoryOrgStore,
@@ -121,6 +121,69 @@ def test_load_demo_is_idempotent_for_users() -> None:
         password_backend=backend,
     )
     assert again == 0
+
+
+def _node_id(schema, label):  # type: ignore[no-untyped-def]
+    return next(n.id for n in schema.nodes.values() if n.label == label)
+
+
+def _accessors(schema, element_id, mode):  # type: ignore[no-untyped-def]
+    return {
+        a.node_id
+        for a in schema.data_accesses
+        if a.element_id == element_id and a.mode is mode
+    }
+
+
+def test_demo_urlaub_carries_enriched_decision_object() -> None:
+    # The "entscheidung" object is filled by whichever XOR branch runs and read
+    # by the notification afterwards -> a data object that travels and is
+    # enriched across activities (D1 holds via the XOR-join intersection).
+    ss, ins, orgs, log = _fresh_stores()
+    demo.load_demo(schema_store=ss, instance_store=ins, org_store=orgs, audit_log=log)
+    urlaub = ss.get(demo.SCHEMA_URLAUB)
+    assert urlaub is not None
+
+    assert urlaub.data_elements["entscheidung"].data_type is DataType.STRING
+    genehmigung = _node_id(urlaub, "Genehmigung durch Leitung")
+    ablehnung = _node_id(urlaub, "Ablehnung dokumentieren")
+    benachrichtigen = _node_id(urlaub, "Mitarbeiter benachrichtigen")
+    # Both branches write it, the notification reads it.
+    assert {genehmigung, ablehnung} <= _accessors(urlaub, "entscheidung", AccessMode.WRITE)
+    assert benachrichtigen in _accessors(urlaub, "entscheidung", AccessMode.READ)
+
+
+def test_demo_completed_instance_holds_enriched_values() -> None:
+    # The finished, rejected instance must carry both the captured "tage" and
+    # the "entscheidung" written by the rejection step (object passed along).
+    ss, ins, orgs, log = _fresh_stores()
+    demo.load_demo(schema_store=ss, instance_store=ins, org_store=orgs, audit_log=log)
+
+    finished = ins.get("urlaub-2026-003")
+    assert finished is not None
+    assert finished.state is InstanceState.COMPLETED
+    assert finished.data_values.get("tage") == 20
+    assert "Abgelehnt" in str(finished.data_values.get("entscheidung", ""))
+
+
+def test_demo_beschaffung_wires_parallel_data_objects() -> None:
+    # Two objects filled on parallel branches and merged at the final activity:
+    # "betrag" (Angebote einholen) and "budget_ok" (Budget pruefen) are both
+    # read by "Bestellung freigeben".
+    ss, ins, orgs, log = _fresh_stores()
+    demo.load_demo(schema_store=ss, instance_store=ins, org_store=orgs, audit_log=log)
+    besch = ss.get(demo.SCHEMA_BESCHAFFUNG)
+    assert besch is not None
+
+    assert besch.data_elements["betrag"].data_type is DataType.FLOAT
+    assert besch.data_elements["budget_ok"].data_type is DataType.BOOLEAN
+    angebote = _node_id(besch, "Angebote einholen")
+    budget = _node_id(besch, "Budget pr\u00fcfen")
+    freigeben = _node_id(besch, "Bestellung freigeben")
+    assert angebote in _accessors(besch, "betrag", AccessMode.WRITE)
+    assert budget in _accessors(besch, "budget_ok", AccessMode.WRITE)
+    assert freigeben in _accessors(besch, "betrag", AccessMode.READ)
+    assert freigeben in _accessors(besch, "budget_ok", AccessMode.READ)
 
 
 # --- store clear ----------------------------------------------------------

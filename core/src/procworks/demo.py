@@ -133,6 +133,16 @@ def _build_urlaubsantrag(org: OrgModel) -> ProcessSchema:
     s = ops.connect_data(s, erfassen, "tage", AccessMode.WRITE)
     s = ops.connect_data(s, pruefen, "tage", AccessMode.READ)
 
+    # A second data object that *travels and is enriched along the flow*: the
+    # decision is filled in by whichever XOR branch runs (approval or rejection)
+    # and then consumed by the notification at the end. Because both branches
+    # write it, the value is guaranteed present on every path after the join
+    # (D1 holds via the XOR-join intersection).
+    s = ops.add_data_element(s, "Entscheidung", DataType.STRING, element_id="entscheidung")
+    s = ops.connect_data(s, _nid(s, "Genehmigung durch Leitung"), "entscheidung", AccessMode.WRITE)
+    s = ops.connect_data(s, _nid(s, "Ablehnung dokumentieren"), "entscheidung", AccessMode.WRITE)
+    s = ops.connect_data(s, _nid(s, "Mitarbeiter benachrichtigen"), "entscheidung", AccessMode.READ)
+
     s = ops.link_org_model(s, ORG_ID, org)
     s = ops.assign_staff_rule(s, erfassen, _role("sachbearbeiter"))
     s = ops.assign_staff_rule(s, pruefen, _role("sachbearbeiter"))
@@ -150,7 +160,19 @@ def _build_beschaffung(org: OrgModel) -> ProcessSchema:
     join = _gateway_id(s, NodeType.AND_JOIN)
     s = ops.serial_insert(s, "Bestellung freigeben", after_node_id=join)
 
+    # Two data objects filled on the *parallel* branches and merged downstream:
+    # "Angebote einholen" writes the order value, "Budget pr\u00fcfen" writes the
+    # budget verdict; the final activity reads both (union at the AND-join -> D1
+    # holds, and the writers target different elements -> no D2 conflict).
     s = ops.add_data_element(s, "Bestellwert", DataType.FLOAT, element_id="betrag")
+    s = ops.add_data_element(s, "Budget genehmigt", DataType.BOOLEAN, element_id="budget_ok")
+    angebote = _nid(s, "Angebote einholen")
+    budget = _nid(s, "Budget pr\u00fcfen")
+    freigeben = _nid(s, "Bestellung freigeben")
+    s = ops.connect_data(s, angebote, "betrag", AccessMode.WRITE)
+    s = ops.connect_data(s, budget, "budget_ok", AccessMode.WRITE)
+    s = ops.connect_data(s, freigeben, "betrag", AccessMode.READ)
+    s = ops.connect_data(s, freigeben, "budget_ok", AccessMode.READ)
 
     s = ops.link_org_model(s, ORG_ID, org)
     s = ops.assign_staff_rule(s, _nid(s, "Angebote einholen"), _role("einkauf"))
@@ -257,12 +279,22 @@ def _seed_instances(
     i2 = _complete(schema, i2, pruefen, ctx, audit, agent_id="a-erika")
     _decide(schema, i2, split, genehmigung, ctx, audit)
 
-    # 3) Finished -- a rejected request that ran all the way to the end.
+    # 3) Finished -- a rejected request that ran all the way to the end. The
+    # "entscheidung" object is written by the rejection step and then read by
+    # the notification, so the finished instance carries the enriched value.
     i3 = _start(schema, ctx, audit, "urlaub-2026-003")
     i3 = _complete(schema, i3, erfassen, ctx, audit, agent_id="a-erika", data={"tage": 20})
     i3 = _complete(schema, i3, pruefen, ctx, audit, agent_id="a-erika")
     i3 = _decide(schema, i3, split, ablehnung, ctx, audit)
-    i3 = _complete(schema, i3, ablehnung, ctx, audit, agent_id="a-erika")
+    i3 = _complete(
+        schema,
+        i3,
+        ablehnung,
+        ctx,
+        audit,
+        agent_id="a-erika",
+        data={"entscheidung": "Abgelehnt: 20 Tage \u00fcberschreiten das Kontingent (max. 10)."},
+    )
     _complete(schema, i3, benachrichtigen, ctx, audit, agent_id="a-erika")
 
 

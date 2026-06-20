@@ -23,7 +23,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **Sicht bleibt beim Neuladen erhalten**: Die aktive Sicht (z. B. Monitoring)
   wird in `localStorage` gemerkt; ein Seiten-Reload stellt sie wieder her,
   statt immer auf „Modellieren“ zurückzufallen.
-
+### Geändert
+- **Beispieldaten zeigen wandernde Datenobjekte**: Die Demo-Prozesse
+  demonstrieren jetzt Datenobjekte, die zwischen Aufgaben befüllt und
+  weitergegeben werden. Im `urlaubsantrag` wandert zusätzlich zur `tage`-Variable
+  ein angereichertes Objekt `entscheidung` durch den Fluss (von beiden
+  XOR-Zweigen geschrieben, von der Benachrichtigung gelesen). Im `beschaffung`
+  werden `betrag` und `budget_ok` auf parallelen Zweigen befüllt und am AND-Join
+  zusammengeführt (zuvor war `betrag` deklariert, aber nicht verdrahtet). Die
+  abgeschlossene Demo-Instanz trägt die real weitergereichten Werte.
 
 
 ### Hinzugefügt

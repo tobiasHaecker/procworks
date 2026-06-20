@@ -535,15 +535,32 @@ wiederhergestellt.
 `demo.py` enthält einen reproduzierbaren Demo-Datensatz, der alle Funktionen
 greifbar macht: eine geteilte Organisation `org-acme` (Rollen, Abteilungen,
 Agenten mit Vertreter), den **freigegebenen** Prozess `urlaubsantrag`
-(START → erfassen → prüfen → XOR Genehmigung/Ablehnung → benachrichtigen, mit
-Datenelement `tage`) und den **Entwurf** `beschaffung` (AND-Split, Datenelement
-`betrag`), dazu **drei Instanzen** an unterschiedlichen Punkten:
+(START → erfassen → prüfen → XOR Genehmigung/Ablehnung → benachrichtigen) und
+den **Entwurf** `beschaffung` (AND-Split), dazu **drei Instanzen** an
+unterschiedlichen Punkten:
 
 ```text
 urlaub-2026-001  RUNNING    frisch gestartet (erste Aktivität offen)
 urlaub-2026-002  RUNNING    erfasst + geprüft, wartet auf Genehmigung der Leitung
 urlaub-2026-003  COMPLETED  abgelehnt + benachrichtigt (Ende erreicht)
 ```
+
+Beide Prozesse zeigen **Datenobjekte, die zwischen Aufgaben wandern und befüllt
+werden** (Schreiben-vor-Lesen, D1):
+
+- `urlaubsantrag`: `tage` wird in *Antrag erfassen* geschrieben und in *Antrag
+  prüfen* sowie der XOR-Bedingung gelesen. Zusätzlich wandert ein **angereichertes**
+  Objekt `entscheidung` durch den Fluss: es wird vom jeweils laufenden XOR-Zweig
+  (*Genehmigung* **oder** *Ablehnung*) befüllt und danach von *Mitarbeiter
+  benachrichtigen* gelesen – garantiert vorhanden auf jedem Pfad (XOR-Join-Schnitt).
+- `beschaffung`: zwei Objekte werden auf **parallelen** Zweigen befüllt und am
+  AND-Join zusammengeführt – `betrag` (*Angebote einholen*) und `budget_ok`
+  (*Budget prüfen*) werden beide von *Bestellung freigeben* gelesen (keine
+  konkurrierenden Schreibzugriffe, D2).
+
+Die abgeschlossene Instanz `urlaub-2026-003` trägt entsprechend reale Werte
+(`tage=20`, `entscheidung="Abgelehnt: …"`), die über die Aktivitäten
+weitergereicht wurden.
 
 `load_demo(*, schema_store, instance_store, org_store, audit_log, password_backend=None)`
 befüllt die Stores idempotent und erzeugt dabei echte Audit-Events (die Instanzen
