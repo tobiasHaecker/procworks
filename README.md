@@ -59,10 +59,32 @@ cd C:\ProcWorks
 docker compose -f deploy/docker-compose.full.yml up --build -d
 ```
 
-Fertig. Im Browser `http://localhost` öffnen – es erscheint das Login. Das
-Start-Passwort des Administrators steht im Server-Log
-(`docker compose -f deploy/docker-compose.full.yml logs api`) oder wird vorab in
-der Compose-Datei gesetzt (siehe Windows-Anleitung, Abschnitt 5).
+Fertig. Im Browser `http://localhost` öffnen – es erscheint das Login-Fenster.
+
+#### Erste Anmeldung als Administrator
+
+- **Login:** `admin`
+- **Passwort:** ein **einmaliges Start-Passwort**, das beim allerersten Start
+  automatisch erzeugt und **ins Server-Log geschrieben** wird. Beim ersten
+  Anmelden verlangt das System sofort ein eigenes, neues Passwort.
+
+So lesen Sie das Start-Passwort aus dem Server-Log – in der **PowerShell**, aus
+dem Ordner `C:\ProcWorks`:
+
+```powershell
+docker compose -f deploy/docker-compose.full.yml logs api | Select-String "Initial admin"
+```
+
+Die gesuchte Zeile sieht so aus (das Passwort steht hinter `temporary password=`):
+
+```text
+Initial admin account created (login='admin', temporary password='…').
+```
+
+> Tipp: Wer das Passwort lieber vorab selbst festlegt, setzt es in der
+> Compose-Datei über `PROCWORKS_ADMIN_PASSWORD` (siehe
+> [Windows-Anleitung, Abschnitt 5](docs/Windows-Server-Setup.md)). Dann entfällt
+> der Blick ins Log.
 
 ### macOS / Linux (zum Ausprobieren)
 
@@ -73,8 +95,9 @@ Linux). Dann:
 git clone https://github.com/tobiasHaecker/procworks.git
 cd procworks
 docker compose -f deploy/docker-compose.full.yml up --build -d
-# Oberfläche: http://localhost   ·   Admin-Startpasswort aus dem Log:
-docker compose -f deploy/docker-compose.full.yml logs api | grep -i passwort
+# Oberfläche: http://localhost   ·   Login: admin
+# Das einmalige Start-Passwort steht im Server-Log (hinter "temporary password="):
+docker compose -f deploy/docker-compose.full.yml logs api | grep "Initial admin"
 ```
 
 ### Sofort ausprobieren: Beispieldaten laden
