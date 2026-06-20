@@ -312,6 +312,57 @@ def _matching_block(schema: ProcessSchema, split_id: str) -> tuple[str, set[str]
     return matching_join, inner
 
 
+def _drop_nodes(candidate: ProcessSchema, to_remove: set[str]) -> None:
+    """Remove ``to_remove`` together with their dependent bindings/accesses."""
+
+    for removed in to_remove:
+        del candidate.nodes[removed]
+        candidate.staff_rules.pop(removed, None)
+        candidate.service_bindings.pop(removed, None)
+        candidate.sub_process_bindings.pop(removed, None)
+    candidate.data_accesses = [
+        a for a in candidate.data_accesses if a.node_id not in to_remove
+    ]
+
+
+def _delete_single_node_branch(
+    candidate: ProcessSchema, node_id: str, split_id: str, join_id: str
+) -> ProcessSchema:
+    """Remove the branch ``split -> node -> join`` whose sole content is ``node``.
+
+    Removing the last node of a branch removes the branch itself (no empty
+    ``split -> join`` edge is left behind). If more than one branch survives,
+    the gateway is kept with that branch gone; if exactly one branch remains,
+    the whole gateway is dissolved and the surviving branch is spliced inline
+    between the split's predecessor and the join's successor.
+    """
+
+    candidate.edges = [
+        e for e in candidate.edges if e.source != node_id and e.target != node_id
+    ]
+    remaining = candidate.outgoing(split_id)
+    if len(remaining) >= 2:
+        # The gateway still has at least two branches -> just drop this one.
+        _drop_nodes(candidate, {node_id})
+        return raise_if_invalid(candidate)
+
+    # Only a single branch survives -> dissolve the gateway and keep that branch.
+    predecessor_id = candidate.incoming(split_id)[0].source
+    successor_id = candidate.outgoing(join_id)[0].target
+    head_id = remaining[0].target
+    tail_id = candidate.incoming(join_id)[0].source
+    to_remove = {node_id, split_id, join_id}
+    candidate.edges = [
+        e
+        for e in candidate.edges
+        if e.source not in {split_id, join_id} and e.target not in {split_id, join_id}
+    ]
+    candidate.edges.append(ControlEdge(source=predecessor_id, target=head_id))
+    candidate.edges.append(ControlEdge(source=tail_id, target=successor_id))
+    _drop_nodes(candidate, to_remove)
+    return raise_if_invalid(candidate)
+
+
 def delete_node(schema: ProcessSchema, node_id: str) -> ProcessSchema:
     """Delete a node from a draft, closing the resulting gap.
 
@@ -322,7 +373,10 @@ def delete_node(schema: ProcessSchema, node_id: str) -> ProcessSchema:
     ensures:  for an ACTIVITY/SUBPROCESS the predecessor is reconnected to the
               successor; for a SPLIT the whole balanced block (split, branch
               bodies and matching join) is removed as a unit and the gap is
-              closed. Dependent data accesses, staff rules and service/
+              closed. Deleting the sole node of a gateway branch removes that
+              branch; if only a single branch then remains, the entire gateway
+              (split and matching join) is dissolved and the surviving branch
+              is kept inline. Dependent data accesses, staff rules and service/
               sub-process bindings of every removed node are dropped. The
               result is validated (validate-before-commit): a deletion that
               would orphan a still-needed data write is rejected (D1) -- this
@@ -372,18 +426,22 @@ def delete_node(schema: ProcessSchema, node_id: str) -> ProcessSchema:
                     )
                 ]
             )
-        to_remove = {node_id}
         predecessor_id = incoming[0].source
         successor_id = outgoing[0].target
+        pred_type = candidate.nodes[predecessor_id].type
+        succ_type = candidate.nodes[successor_id].type
+        if pred_type in SPLIT_TYPES and succ_type in JOIN_TYPES:
+            join_id, _ = _matching_block(candidate, predecessor_id)
+            if join_id == successor_id:
+                # The node is the sole content of one gateway branch; removing
+                # it removes the branch (and dissolves the gateway if only one
+                # branch would remain).
+                return _delete_single_node_branch(
+                    candidate, node_id, predecessor_id, successor_id
+                )
+        to_remove = {node_id}
 
-    for removed in to_remove:
-        del candidate.nodes[removed]
-        candidate.staff_rules.pop(removed, None)
-        candidate.service_bindings.pop(removed, None)
-        candidate.sub_process_bindings.pop(removed, None)
-    candidate.data_accesses = [
-        a for a in candidate.data_accesses if a.node_id not in to_remove
-    ]
+    _drop_nodes(candidate, to_remove)
     candidate.edges = [
         e
         for e in candidate.edges

@@ -99,6 +99,24 @@ def test_delete_split_via_api_removes_block() -> None:
     assert types == {"START", "END"}
 
 
+def test_delete_branch_via_api_dissolves_gateway() -> None:
+    sid = client.post("/schemas", json={"name": "ZweigDel"}).json()["id"]
+    client.post(
+        f"/schemas/{sid}/parallel-insert",
+        json={"branch_labels": ["A", "B"], "after_node_id": "start"},
+    )
+    schema = client.get(f"/schemas/{sid}").json()
+    branch_a = next(nid for nid, n in schema["nodes"].items() if n.get("label") == "A")
+    resp = client.delete(f"/schemas/{sid}/nodes/{branch_a}")
+    assert resp.status_code == 200
+    nodes = resp.json()["nodes"]
+    types = {n["type"] for n in nodes.values()}
+    assert "AND_SPLIT" not in types and "AND_JOIN" not in types
+    labels = {n.get("label") for n in nodes.values() if n["type"] == "ACTIVITY"}
+    assert labels == {"B"}
+    assert client.get(f"/schemas/{sid}/validation").json()["correct"] is True
+
+
 def test_release_via_api_then_immutable() -> None:
     sid = client.post("/schemas", json={"name": "R"}).json()["id"]
     client.post(f"/schemas/{sid}/serial-insert", json={"label": "S", "after_node_id": "start"})

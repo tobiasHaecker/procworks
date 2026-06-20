@@ -9,6 +9,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- `delete_node` entfernt jetzt beim Löschen des letzten Knotens eines
+  Verzweigungszweigs den Zweig selbst (statt eine leere Split-→-Join-Kante zu
+  hinterlassen). Bleibt danach nur **ein** Zweig einer XOR- oder UND-Verzweigung
+  übrig, wird die gesamte Verzweigung (Split und passender Join) aufgelöst und
+  der verbliebene Zweig inline zwischen Vorgänger und Nachfolger behalten.
 - Modellbearbeitung im Web-Editor: ausgewählte Knoten lassen sich jetzt direkt
   umbenennen und entfernen. Zwei neue korrektheitserhaltende Kern-Operationen
   `rename_node(schema, node_id, label)` (nur Aktivität/Teilprozess, Schema muss

@@ -235,3 +235,54 @@ def test_delete_node_drops_dependent_bindings() -> None:
     assert act.id not in schema.service_bindings
     assert all(a.node_id != act.id for a in schema.data_accesses)
     assert validate(schema) == []
+
+
+def test_delete_branch_dissolves_and_gateway_keeping_other_branch() -> None:
+    schema = create_empty_schema("ZweigLoeschen")
+    schema = parallel_insert(schema, ["A", "B"], after_node_id="start")
+    a = next(n for n in schema.nodes.values() if n.label == "A")
+    schema = delete_node(schema, a.id)
+    # The gateway dissolves; only branch B survives inline between START and END.
+    types = {n.type for n in schema.nodes.values()}
+    assert NodeType.AND_SPLIT not in types
+    assert NodeType.AND_JOIN not in types
+    labels = {n.label for n in schema.nodes.values() if n.type is NodeType.ACTIVITY}
+    assert labels == {"B"}
+    b = next(n for n in schema.nodes.values() if n.label == "B")
+    assert [e.source for e in schema.incoming(b.id)] == ["start"]
+    assert [e.target for e in schema.outgoing(b.id)] == ["end"]
+    assert validate(schema) == []
+
+
+def test_delete_branch_dissolves_xor_gateway_keeping_other_branch() -> None:
+    schema = create_empty_schema("XorZweig")
+    schema = conditional_insert(
+        schema, [("x > 1", "Ja"), ("x <= 1", "Nein")], after_node_id="start"
+    )
+    yes = next(n for n in schema.nodes.values() if n.label == "Ja")
+    schema = delete_node(schema, yes.id)
+    types = {n.type for n in schema.nodes.values()}
+    assert NodeType.XOR_SPLIT not in types
+    assert NodeType.XOR_JOIN not in types
+    labels = {n.label for n in schema.nodes.values() if n.type is NodeType.ACTIVITY}
+    assert labels == {"Nein"}
+    # The surviving branch is now an unconditional serial step.
+    nein = next(n for n in schema.nodes.values() if n.label == "Nein")
+    assert schema.incoming(nein.id)[0].condition is None
+    assert validate(schema) == []
+
+
+def test_delete_branch_keeps_gateway_when_two_branches_remain() -> None:
+    schema = create_empty_schema("DreiZweige")
+    schema = parallel_insert(schema, ["A", "B", "C"], after_node_id="start")
+    a = next(n for n in schema.nodes.values() if n.label == "A")
+    schema = delete_node(schema, a.id)
+    # Three-way AND: removing one branch leaves a clean two-branch gateway
+    # (no empty split -> join edge).
+    split = next(n for n in schema.nodes.values() if n.type is NodeType.AND_SPLIT)
+    join = next(n for n in schema.nodes.values() if n.type is NodeType.AND_JOIN)
+    assert len(schema.outgoing(split.id)) == 2
+    assert len(schema.incoming(join.id)) == 2
+    labels = {n.label for n in schema.nodes.values() if n.type is NodeType.ACTIVITY}
+    assert labels == {"B", "C"}
+    assert validate(schema) == []
