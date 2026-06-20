@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     create_engine,
     delete,
+    func,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -306,6 +307,17 @@ class SqlAlchemyAuditLog:
                 .order_by(AuditEventRow.seq)
             )
             return [_event_from_row(row) for row in session.scalars(stmt)]
+
+    def revision(self) -> int:
+        """Return the highest assigned ``seq`` (0 when the log is empty).
+
+        Mirrors :meth:`procworks.audit.InMemoryAuditLog.revision`: a cheap,
+        monotonic counter that clients poll to detect new runtime progress.
+        """
+
+        with Session(self._engine) as session:
+            value = session.scalar(select(func.max(AuditEventRow.seq)))
+            return int(value or 0)
 
     def clear(self) -> None:
         with Session(self._engine) as session:

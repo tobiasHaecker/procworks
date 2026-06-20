@@ -916,6 +916,22 @@ Das Laufzeitgeschehen wird so dargestellt, dass der Zustand jeder Instanz **auf 
 - **Kennzahlen/Analytics.** Aggregierte KPIs (Durchlaufzeiten, Engpässe, Fehlerquoten) – Datenbasis ist das Event-/Audit-Log (Abschnitt 5.3); optional Process-Mining-Auswertung.
 - **Eingriffe immer geprüft.** Aktionen aus dem Monitor (z. B. Ad-hoc-Änderung, Abbruch, Eskalation) laufen ausnahmslos über dieselben geprüften Operationen/Kontrakte (Abschnitt 7) – bequemer Zugang, gleiche Sicherheit.
 
+> **Umsetzungsstand (Live-Aktualisierung).** Der Web-Client realisiert die
+> Echtzeit-Aktualisierung aktuell über ein **schlankes Revisions-Polling** statt
+> über WebSocket/SSE – eine bewusst minimal-invasive, betriebsstabile Variante.
+> Der Endpunkt `GET /monitoring/revision` liefert einen **monoton steigenden
+> Revisionszähler** aus dem Audit-Log (`AuditLog.revision()`). Wird der
+> Fortschritt einer Aktivität/Instanz irgendwo aktualisiert, ändert sich dieser
+> Zähler; der Client pollt ihn im Hintergrund (alle 4 s) und rendert nur die
+> **aktive Laufzeit-Sicht** (Aufgabenlisten, Ausführen, Monitoring) bei
+> tatsächlicher Änderung neu. Modellier-Sichten sowie offene Dialoge und
+> Formulareingaben bleiben dabei unangetastet. Ein Upgrade auf echtes Event-Push
+> (WebSocket/SSE) bleibt abwärtskompatibel möglich.
+>
+> **Sicht-Persistenz.** Die aktuell gewählte Sicht wird im `localStorage`
+> gemerkt; ein Seiten-Reload stellt sie wieder her (z. B. Monitoring bleibt
+> Monitoring), statt auf „Modellieren" zurückzuspringen.
+
 #### 8.4.1 Leistungssicht & Verbesserungsunterstützung
 
 Über die reine Statusanzeige hinaus liefert das Audit-Log die Datenbasis, um Prozesse **bewertbar** zu machen – die Voraussetzung für gezielte Verbesserung (Redesign). Zwei in der BPM-Literatur etablierte Denkrahmen strukturieren diese Sicht; ProcWorks übernimmt sie als KPI-Konzept (eigene Formulierung):

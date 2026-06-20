@@ -40,7 +40,7 @@ const state = {
   principal: null,
   authMode: "open",
   passwordLogin: false,
-  view: "model",
+  view: localStorage.getItem("view") || "model",
   schemaIds: [],
   schemaNames: {},
   schemaId: localStorage.getItem("schemaId") || null,
@@ -51,6 +51,9 @@ const state = {
   instance: null,
   worklist: null,
   selectedNode: null,
+  // Last seen runtime-event revision (GET /monitoring/revision). Drives the
+  // live auto-refresh of the task/monitoring/run views; not persisted.
+  revision: 0,
 };
 
 const NODE_TYPE = {
@@ -1837,12 +1840,75 @@ async function setToken(token) {
 }
 
 function render() {
+  // Guard against a stale/unknown persisted view (e.g. after a rename) so the
+  // dispatch below never dereferences an undefined entry.
+  if (!VIEW_META[state.view]) state.view = "model";
+  // Remember the active view so a page reload restores it instead of always
+  // falling back to "Modellieren".
+  localStorage.setItem("view", state.view);
   const meta = VIEW_META[state.view];
   byId("view-title").textContent = meta.title;
   byId("view-sub").textContent = meta.sub;
   renderSchemaPicker();
   setActiveNav();
   Promise.resolve(meta.fn()).catch((err) => { const d = describeError(err); toast("err", d.title, d.lines); });
+}
+
+// --------------------------------------------------------------------------
+// Live-Aktualisierung (Auto-Refresh der Laufzeit-Sichten)
+// --------------------------------------------------------------------------
+
+// Views that mirror runtime progress and should refresh automatically when an
+// activity/instance advances anywhere (e.g. another user completes a task).
+// Modelling views are intentionally excluded so editing is never interrupted.
+const LIVE_VIEWS = new Set(["run", "tasks", "monitor"]);
+const LIVE_POLL_MS = 4000;
+let livePollBusy = false;
+
+// True while the user is actively interacting (a modal/login overlay is open or
+// the focus sits in a form field of the content area). Auto-refresh is skipped
+// then so it never wipes an open dropdown or a half-filled form.
+function userIsBusy() {
+  if (byId("modal-root").children.length) return true;
+  const overlay = byId("auth-overlay");
+  if (overlay && overlay.style.display !== "none") return true;
+  const active = document.activeElement;
+  if (active && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName)) {
+    const content = byId("content");
+    if (content && content.contains(active)) return true;
+  }
+  return false;
+}
+
+// Poll the cheap runtime-event revision; when it changed, refresh the current
+// live view so task lists and monitoring follow progress without a manual
+// reload. The "run" view caches the loaded instance, so reload it first.
+async function pollLiveUpdates() {
+  if (livePollBusy) return;
+  if (state.passwordLogin && !state.principal) return;
+  livePollBusy = true;
+  try {
+    const res = await api.get("/monitoring/revision");
+    const rev = res && typeof res.revision === "number" ? res.revision : 0;
+    if (rev === state.revision) return;
+    state.revision = rev;
+    if (!LIVE_VIEWS.has(state.view) || userIsBusy()) return;
+    if (state.view === "run" && state.instanceId) {
+      try { await loadInstance(state.instanceId); } catch (_e) { /* instance gone */ }
+    }
+    render();
+  } catch (_e) {
+    // Silent: a transient API hiccup must not spam toasts on a background poll.
+  } finally {
+    livePollBusy = false;
+  }
+}
+
+// Start the background poll exactly once (boot may run repeatedly on re-login).
+function startLiveUpdates() {
+  if (startLiveUpdates._started) return;
+  startLiveUpdates._started = true;
+  setInterval(pollLiveUpdates, LIVE_POLL_MS);
 }
 
 function wireNav() {
@@ -1885,6 +1951,13 @@ async function boot() {
     hideOverlay();
     await loadSchemas();
     await refreshSchema();
+    // Baseline the live-update revision to "now" so the first poll only fires on
+    // genuinely new progress, then start the background auto-refresh.
+    try {
+      const res = await api.get("/monitoring/revision");
+      state.revision = res && typeof res.revision === "number" ? res.revision : 0;
+    } catch (_e) { /* keep current baseline */ }
+    startLiveUpdates();
   } catch (err) {
     setConnected(false);
     const d = describeError(err);

@@ -507,6 +507,7 @@ GET  /audit?schema_id=&instance_id=      -> Roh-Events (optional gefiltert)
 GET  /monitoring/kpis?schema_id=         -> { total_instances, running, completed,
                                              avg_cycle_seconds, activity_stats: [...] }
 GET  /monitoring/process-map?schema_id=  -> { nodes: [...], edges: [...] }
+GET  /monitoring/revision                -> { revision }   # monotoner Zähler für Live-Refresh
 ```
 
 Erfasste Ereignisse sind `INSTANCE_CREATED`, `ACTIVITY_STARTED`,
@@ -520,6 +521,14 @@ Engpass-Tabelle, Prozesskarte) und blendet pro Instanz einen **Audit-Verlauf**
 ein. Ohne `DATABASE_URL` liegt das Log in-memory; mit `DATABASE_URL` wird jedes
 Event durabel in die Tabelle `audit_event` geschrieben (`SqlAlchemyAuditLog`,
 monotone `seq` per Datenbank) und überlebt einen Neustart.
+
+Aus derselben `seq` leitet sich `GET /monitoring/revision` ab – ein **monoton
+steigender Revisionszähler** (`AuditLog.revision()`). Der Web-Client pollt ihn
+im Hintergrund und aktualisiert die aktive Laufzeit-Sicht (Aufgabenlisten,
+Ausführen, Monitoring) **automatisch**, sobald sich der Fortschritt einer
+Aktivität/Instanz irgendwo ändert – ohne manuelles Neuladen. Die zuletzt
+gewählte Sicht wird zudem im Browser gemerkt und bei einem Reload
+wiederhergestellt.
 
 ### Beispieldaten & Reset (Administrator)
 

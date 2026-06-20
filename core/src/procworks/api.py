@@ -297,6 +297,17 @@ class ResetResponse(BaseModel):
     users: int
 
 
+class MonitoringRevision(BaseModel):
+    """A cheap, monotonic revision counter of the runtime event history.
+
+    Clients poll ``GET /monitoring/revision`` and refresh their live views (task
+    lists, monitoring, the running instance) whenever the value changes, so
+    progress made by other users becomes visible without a manual reload.
+    """
+
+    revision: int
+
+
 class CreateSchemaRequest(BaseModel):
     name: str = Field(..., examples=["Urlaubsantrag"])
 
@@ -1761,3 +1772,20 @@ def get_kpis(schema_id: str | None = None) -> KpiReport:
 @app.get("/monitoring/process-map", response_model=ProcessMap, dependencies=[_read])
 def get_process_map(schema_id: str | None = None) -> ProcessMap:
     return discover_process_map(_audit.list_all(), schema_id)
+
+
+@app.get(
+    "/monitoring/revision",
+    response_model=MonitoringRevision,
+    dependencies=[_read],
+)
+def get_monitoring_revision() -> MonitoringRevision:
+    """Return the current runtime-event revision for cheap client polling.
+
+    The revision is a monotonic counter that increases whenever a runtime event
+    (instance/activity progress) is recorded. The web client polls this endpoint
+    and re-renders the live views (tasks, monitoring, the running instance) when
+    the value changes, so progress made by others appears automatically.
+    """
+
+    return MonitoringRevision(revision=_audit.revision())

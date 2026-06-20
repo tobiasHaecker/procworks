@@ -26,6 +26,19 @@ def test_in_memory_log_appends_with_monotonic_seq() -> None:
     assert len(log.list_all()) == 2
 
 
+def test_revision_tracks_append_and_clear() -> None:
+    # The revision counter powers the web client's auto-refresh poll: it starts
+    # at zero, advances with every appended event and resets when the log clears.
+    log = InMemoryAuditLog()
+    assert log.revision() == 0
+    log.append(EventType.INSTANCE_CREATED, "i1", "s1")
+    assert log.revision() == 1
+    log.append(EventType.ACTIVITY_COMPLETED, "i1", "s1", node_id="a")
+    assert log.revision() == 2
+    log.clear()
+    assert log.revision() == 0
+
+
 def test_for_instance_filters_by_instance() -> None:
     log = InMemoryAuditLog()
     log.append(EventType.INSTANCE_CREATED, "i1", "s1")

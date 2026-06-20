@@ -69,6 +69,8 @@ class AuditLog(Protocol):
 
     def for_instance(self, instance_id: str) -> list[AuditEvent]: ...
 
+    def revision(self) -> int: ...
+
     def clear(self) -> None: ...
 
 
@@ -112,6 +114,16 @@ class InMemoryAuditLog:
 
     def for_instance(self, instance_id: str) -> list[AuditEvent]:
         return [e for e in self._events if e.instance_id == instance_id]
+
+    def revision(self) -> int:
+        """Return a monotonic revision counter of the recorded history.
+
+        The counter equals the highest sequence number appended so far (0 for an
+        empty log). Clients poll it cheaply to detect that runtime progress has
+        happened and refresh their live views without fetching the full history.
+        """
+
+        return self._seq
 
     def clear(self) -> None:
         self._events.clear()

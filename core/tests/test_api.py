@@ -286,7 +286,28 @@ def test_instance_run_via_api() -> None:
     assert resp.json()["state"] == "COMPLETED"
 
 
-def test_instantiate_draft_starts_test_instance() -> None:
+def test_monitoring_revision_tracks_progress() -> None:
+    # The lightweight revision counter backs the web client's auto-refresh: it
+    # must strictly increase whenever runtime progress is recorded so a poll can
+    # detect "something changed" without diffing the whole monitoring payload.
+    sid = client.post("/schemas", json={"name": "RevLauf"}).json()["id"]
+    client.post(f"/schemas/{sid}/serial-insert", json={"label": "S", "after_node_id": "start"})
+    client.post(f"/schemas/{sid}/release")
+
+    before = client.get("/monitoring/revision")
+    assert before.status_code == 200
+    rev_before = before.json()["revision"]
+    assert isinstance(rev_before, int)
+
+    iid = client.post(f"/schemas/{sid}/instances").json()["id"]
+    rev_started = client.get("/monitoring/revision").json()["revision"]
+    assert rev_started > rev_before
+
+    node_id = client.get(f"/instances/{iid}/worklist").json()["ready_activities"][0]
+    client.post(f"/instances/{iid}/complete", json={"node_id": node_id})
+    rev_completed = client.get("/monitoring/revision").json()["revision"]
+    assert rev_completed > rev_started
+
     # In open dev mode the principal holds every role (incl. modeler/admin), so
     # a draft schema can be started as a flagged, KPI-excluded *test* instance.
     sid = client.post("/schemas", json={"name": "NochEntwurf"}).json()["id"]

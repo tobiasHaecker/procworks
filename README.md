@@ -157,6 +157,12 @@ demonstriert die Benutzerführung mit drei Ansichten:
 | **Monitoring** | Live-Prozesslandkarte mit Status-Overlay, KPIs, Instanzliste mit Filtern, Detail-Drawer mit Zeitreise. |
 | **Revisionsübernahme** | Geführter Migrations-Assistent (v3?v4) mit Diff, M1–M5-Auswertung, Einzel- und Sammelübernahme. |
 
+> **Live-Aktualisierung:** Wird der Fortschritt einer Aktivität/Instanz
+> aktualisiert, aktualisieren sich Aufgabenlisten, Ausführen-Sicht und
+> Monitoring im Web-Client automatisch (Hintergrund-Polling von
+> `GET /monitoring/revision`). Die aktive Sicht überlebt zudem einen
+> Seiten-Reload (Persistenz im Browser).
+
 **Öffnen:** [prototype/index.html](prototype/index.html) direkt im Browser per Doppelklick
 oder über die VS-Code-Erweiterung „Live Server".
 

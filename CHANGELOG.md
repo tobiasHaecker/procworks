@@ -8,7 +8,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
-## [0.2.0] - 2026-06-20
+### Hinzugefügt
+- **Live-Aktualisierung der Laufzeit-Sichten**: Wird der Fortschritt einer
+  Aktivität/Instanz aktualisiert (z. B. eine Aufgabe von einem anderen Nutzer
+  abgeschlossen), aktualisieren sich die **Aufgabenlisten**, die **Ausführen**-
+  Sicht und das **Monitoring** im Web-Client automatisch – ohne manuelles
+  Neuladen.
+  - Neuer schlanker Endpunkt `GET /monitoring/revision` (Leserechte) liefert
+    einen monoton steigenden Revisionszähler aus dem Audit-Log
+    (`AuditLog.revision()` für In-Memory- und SQLAlchemy-Backend).
+  - Der Web-Client pollt diesen Zähler im Hintergrund (alle 4 s) und rendert die
+    aktuelle Laufzeit-Sicht nur bei tatsächlicher Änderung neu. Modellier-Sichten
+    sowie offene Dialoge/Formulareingaben bleiben unangetastet.
+- **Sicht bleibt beim Neuladen erhalten**: Die aktive Sicht (z. B. Monitoring)
+  wird in `localStorage` gemerkt; ein Seiten-Reload stellt sie wieder her,
+  statt immer auf „Modellieren“ zurückzufallen.
+
+
 
 ### Hinzugefügt
 - **Beispieldaten & administrativer Reset**: Ein eingebauter Demo-Datensatz
