@@ -2,7 +2,7 @@
 
 > Schwerpunkt: Konzepte und **Korrektheitsgarantien** nach dem Vorbild der **ADEPT2-Forschung** (Universität Ulm, Dadam/Reichert), eingeordnet in den Standard **BPMN 2.0**.
 >
-> Status: Konzept. Version 0.7 (Backend-Stack festgelegt: Python/FastAPI – Abschnitt 12).
+> Status: Konzept. Version 0.9 (Vertiefung aus ergänzenden Quellen: 7PMG-Priorisierung/SEQUAL, ITIL-Eskalation & Priorität = Auswirkung + Dringlichkeit, drei Flexibilitätsdimensionen; neue Abschnitte/Erweiterungen 2.4.1, 3.8, 6.2.1, 6.5, 13.1, 15.1).
 >
 > Leitprinzip (nicht verhandelbar): **Correctness by Construction** – jede Änderung am Modell führt ausnahmslos zu einem syntaktisch korrekten und ausführbaren Modell (siehe Abschnitt 1.1).
 
@@ -142,6 +142,22 @@ Bei der **Modellerstellung** werden die Richtlinien aus BPMN 2.0 **und** die str
 
 > **Verhältnis BPMN ? ADEPT:** Wo BPMN nur *empfiehlt* (Lesbarkeit, Benennung), gibt der Editor Hinweise; wo ADEPT *Korrektheit garantiert* (Struktur, Datenfluss), erzwingt der Editor die Regel konstruktiv. Beim **BPMN-Import** wird auf die geprüfte, ausführbare Teilmenge abgebildet; nicht regelkonforme Konstrukte (z. B. unstrukturierte OR-Gateways) werden abgelehnt oder in eine blockstrukturierte Form überführt.
 
+### 2.4.1 Bezug zu etablierten Modellierungsrichtlinien (7PMG, GoM)
+
+Die obigen MR-Regeln stehen im Einklang mit anerkannten, empirisch fundierten Richtlinien der Prozessmodellierungs-Forschung. Wir nennen sie hier explizit, um die fachliche Verankerung offenzulegen; übernommen werden ausschließlich die zugrunde liegenden, allgemein anerkannten Konzepte – in eigener Formulierung.
+
+- **Seven Process Modeling Guidelines (7PMG).** Die sieben Faustregeln von Mendling, Reijers und van der Aalst zielen auf verständliche, fehlerarme Modelle [MRA10]. Mehrere decken sich unmittelbar mit unseren erzwungenen Regeln:
+  - *Modell so weit wie möglich strukturieren* (Blockstruktur) ? MR1 / K1.
+  - *Wenige Elemente verwenden bzw. große Modelle zerlegen* ? MR12 (Modularität über Sub-/Folgeprozesse).
+  - *Routing-Pfade je Element minimieren* ? MR9 (Verzweigung nur über explizite Gateways).
+  - *Strukturiert modellieren und OR-Routing vermeiden* ? begründet unsere bewusste Beschränkung auf AND/XOR (kein unstrukturiertes OR-Gateway).
+  - *Verbale Benennungskonventionen (Objekt + Verb) nutzen* ? MR8.
+
+  Wo eine 7PMG-Empfehlung formal garantierbar ist, hebt ProcWorks sie von der bloßen Empfehlung zur **konstruktiv erzwungenen** Regel an; rein stilistische Punkte bleiben Hinweis. Eine Expertenbefragung in [MRA10] priorisiert die Richtlinien nach ihrem Verständlichkeitsbeitrag (höchster zuerst): G4 (Strukturierung) > G7 (Zerlegung) > G1 (wenige Elemente) > G6 (Benennung) > G2 (Routing-Pfade) > G3 (ein Start/Ende) > G5 (kein OR). Bemerkenswert: Die beiden am höchsten bewerteten Punkte (G4, G7) sind in ProcWorks **bauartbedingt** garantiert; das niedrigst bewertete G5 (kein OR) ist bei uns ohnehin Konstruktionsentscheidung – die nach Expertensicht wirkungsvollsten Maßnahmen sind also bereits Teil der Architektur.
+- **Grundsätze ordnungsmäßiger Modellierung (GoM).** Die GoM – Richtigkeit, Relevanz, Wirtschaftlichkeit, Klarheit, Vergleichbarkeit und systematischer Aufbau [Ros96][BRU00] – bilden den übergeordneten Qualitätsrahmen: „Richtigkeit" und „systematischer Aufbau" entsprechen unserer **Stufe A** (strukturelle Korrektheit, K/D), „Klarheit" den Notations- und Benennungsregeln (MR8–MR11), „Vergleichbarkeit" der einheitlichen, blockstrukturierten Form.
+
+> **Einordnung:** Empirische Studien belegen einen Zusammenhang zwischen Modellmetriken (Größe, Verschachtelungstiefe, Gateway-Heterogenität) und Fehlerwahrscheinlichkeit [MNV07]. Übergeordnete semiotische Qualitätsrahmen wie SEQUAL [KSJ06][LSS94] ordnen diese Befunde ein (vgl. §3.7). ProcWorks senkt die Fehlerquellen **bauartbedingt**: Blockstruktur, einheitliche Gateways und Modularisierung sind nicht optional, sondern Teil der Konstruktion (Correctness by Construction).
+
 ---
 
 ## 3. Korrektheitskriterien (formale Basis)
@@ -241,6 +257,43 @@ Sub- und Folgeprozesse (Abschnitt 4.2) sind ebenfalls **Correctness by Construct
 - **F3 – Entkopplung:** Bei `ASYNC` hat der Abschluss des Hauptprozesses **keine** Rückabhängigkeit vom Folgeprozess; ein Fehlschlag des Folgeprozesses macht den abgeschlossenen Hauptprozess nicht rückwirkend ungültig (lose Kopplung, eigene Fehlerbehandlung/Recovery).
 
 > Komposition erweitert die Korrektheitsinvariante über das einzelne Schema hinaus auf den **Aufruf- und Kettengraphen**: Auch zusammengesetzte Prozesse sind zu jedem Zeitpunkt strukturell korrekt; ihre Ausführbarkeit (Stufe B) erfordert zusätzlich erfüllte H/F-Kriterien.
+
+---
+
+### 3.7 Einordnung: syntaktische, semantische und pragmatische Qualität
+
+Modellqualität lässt sich entlang dreier semiotischer Dimensionen einordnen [LSS94]. Diese Unterscheidung macht **transparent, was ProcWorks garantieren kann und was nicht** – eine bewusst ehrliche Abgrenzung der Correctness-by-Construction-Reichweite.
+
+| Dimension | Frage | Reichweite in ProcWorks |
+|-----------|-------|--------------------------|
+| **Syntaktisch** | Entspricht das Modell den Regeln der Modellierungssprache? | **Garantiert (Stufe A).** Blockstruktur, Gateways, Daten-/Kontrollfluss (K/D) werden konstruktiv erzwungen – ein syntaktisch falsches Modell kann nicht entstehen. |
+| **Semantisch** | Ist das Modell *gültig* (alle Aussagen treffen zu) und *vollständig* (alle relevanten Aussagen enthalten) gegenüber der realen Domäne? | **Unterstützt, nicht automatisierbar garantierbar.** Gültigkeit und Vollständigkeit erfordern fachliches Domänenwissen und Abstimmung mit den Beteiligten. ProcWorks unterstützt dies durch Vorschau/Simulation, klare Visualisierung und geführte Modellierung – die Entscheidung bleibt aber fachlich. |
+| **Pragmatisch** | Wird das Modell von seinen Lesern *verstanden*? | **Gefördert.** Benennungs-, Notations- und Modularitätsregeln (MR8–MR12) sowie 7PMG/GoM (§2.4.1) verbessern die Verständlichkeit; Layout, Sichten (§8.2) und Konsistenz unterstützen das Verstehen. |
+
+Dazu passend die übliche Begriffstrias der Modellprüfung:
+
+- **Verifikation** – „Bauen wir das Modell *richtig*?" (formale Korrektheit). Das ist die Domäne unseres Correctness Validators (K/D/Z/B, Soundness): vollständig automatisiert und beim Commit erzwungen.
+- **Validierung** – „Bauen wir das *richtige* Modell?" (Übereinstimmung mit dem fachlichen Bedarf). Das bleibt ein Dialog mit den Fachverantwortlichen; ProcWorks liefert hierfür Werkzeuge (Vorschau, Simulation, Diff), trifft die Entscheidung aber nicht.
+- **Zertifizierung** – Bestätigung, dass beides erfüllt ist (z. B. Freigabe-Gate, Stufe B): in ProcWorks der dokumentierte, auditierte **Release** einer Schema-Version.
+
+> **Kernaussage:** Correctness by Construction garantiert die **syntaktisch-strukturelle** Korrektheit lückenlos und automatisiert. **Semantische** Korrektheit (passt das Modell zur Realität?) ist prinzipiell nicht maschinell entscheidbar – ProcWorks macht sie aber durch Sichtbarkeit, Simulation und geführte Modellierung **leichter erreichbar**, statt sie vorzutäuschen.
+
+---
+
+### 3.8 Zeitliche Perspektive (T1–T3, Roadmap)
+
+Die zeitliche Perspektive ergänzt das Modell um **Fristen, Dauern und Zeitabstände** und ist in der Forschung als eigenständige, korrektheitsrelevante Dimension etabliert (u. a. die *Time Patterns* für prozessorientierte Informationssysteme, Lanz/Reichert/Weber 2016; [RW12]). Sie ist heute **noch nicht umgesetzt** und hier als geplante Erweiterung mit eigenen, künftig prüfbaren Kriterien spezifiziert – konsequent demselben Correctness-by-Construction-Gedanken folgend:
+
+- **T1 – Wohldefinierte Zeitangaben:** Fristen/Dauern werden nur an zulässigen Stellen modelliert (Aktivität, Block, Prozess) und sind typ-/einheitenkonform (Dauer ≥ 0, gültige Kalender/Geschäftszeiten).
+- **T2 – Konsistenz im Kontrollfluss:** Zeitliche Vorgaben dürfen sich entlang der Blockstruktur nicht widersprechen (z. B. darf die Summe minimaler Teildauern eines Blocks dessen Maximalfrist nicht überschreiten). Analog zur Struktur-/Datenprüfung erfolgt dies blocklokal.
+- **T3 – Definierte Fristverletzungs-Reaktion:** Zu jeder harten Frist gehört eine modellierte Reaktion (Eskalation, Benachrichtigung, alternativer Pfad), damit eine Überschreitung nie zu einem undefinierten Zustand führt. Für nicht rechtzeitig bearbeitete Arbeitslisten-Einträge sind mehrstufige Eskalationen vorgesehen (siehe unten).
+
+**Eskalations- und Prioritätsmodell (aus dem IT-Service-Management übernommen).** Für die operative Ausgestaltung von T3 greift ProcWorks auf zwei im IT-Service-Management (ITIL) etablierte, allgemein anerkannte Konzepte zurück [Olb12]:
+
+- **Zwei Eskalationsrichtungen:** Eine **funktionale (horizontale) Eskalation** reicht eine Aufgabe an eine fachlich höhere Bearbeiterstufe weiter (in unserem Modell: an eine andere, über die Bearbeiterzuordnungsregel ermittelte Agentenmenge). Eine **hierarchische (vertikale) Eskalation** informiert bei Fristüberschreitung oder SLA-Gefährdung eine verantwortliche Leitungsstelle. Beide sind als zeitgesteuerte Übergänge des Arbeitslisten-Lebenszyklus (§6.2.1) modellierbar.
+- **Priorität = Auswirkung + Dringlichkeit:** Die Bearbeitungsreihenfolge eines Arbeitslisten-Eintrags ergibt sich aus dem Zusammenspiel von **Auswirkung** (wie viele/welche Beteiligten betroffen sind) und **Dringlichkeit** (wie schnell reagiert werden muss). Daraus lassen sich – wie bei SLA-gebundenen Antwort-/Wiederherstellungszeiten – Fristen je Prioritätsklasse ableiten.
+
+> **Einordnung:** T1–T3 sind als **künftige Stufe-A/B-Kriterien** vorgesehen (Struktur-Konsistenz als A, vollständige Eskalationsabdeckung als B). Bis zur Umsetzung erfasst ProcWorks Zeit ausschließlich **beobachtend** (Start-/Endzeitstempel im Audit-Log, SLA-Anzeige im Monitoring, §8.4). Die konkrete Toolanpassung ist in Abschnitt 13 vorbereitet.
 
 ---
 
@@ -553,6 +606,23 @@ flowchart LR
 
 ---
 
+### 5.5 Prozessperspektiven (PAIS-Einordnung)
+
+ProcWorks ist ein **prozessorientiertes Informationssystem (PAIS – Process-Aware Information System)**: ein System, das Abläufe auf Basis explizit modellierter Prozessschemata koordiniert und ausführt [RW12]. Ein vollständiges Prozessmodell beschreibt einen Ablauf aus mehreren, abgestimmten **Perspektiven** [Dum+13]. Die folgende Tabelle ordnet unsere Bausteine diesen Perspektiven zu und macht damit auch sichtbar, **welche Perspektive heute trägt und welche für die Roadmap reserviert ist**:
+
+| Perspektive | Inhalt | Umsetzung in ProcWorks |
+|-------------|--------|------------------------|
+| **Funktional** | *Was* wird getan (Aktivitäten/Schritte)? | Knoten/`ActivityTemplate`s, Activity Repository (§5.2) |
+| **Verhalten (Kontrollfluss)** | *Wann/in welcher Reihenfolge*? | Blockstruktur, Gateways, Schleifen, Markierungsmodell (§3.1, §4) |
+| **Information (Daten)** | *Welche Daten* werden gelesen/geschrieben? | Datenelemente, Datenkanten, D1–D5 (§3.2, §8.2) |
+| **Organisation (Ressourcen)** | *Wer* führt aus? | Organisationsmodell, Bearbeiterzuordnungsregeln, Z1–Z4 (§3.3) |
+| **Operational** | *Womit* (Anwendungen/Dienste)? | Executors/Ausführungsumgebungen, Connectoren (§5.2, §9) |
+| **Zeit (temporal)** | *Bis wann* (Fristen, Dauern, Zeitabstände)? | **Roadmap** – derzeit nur Start-/Endzeit im Audit-Log; deadlines/Eskalation als geplante Erweiterung (§3.8, §13) |
+
+> **Honest gap:** Fünf der sechs Perspektiven sind im Meta-Modell und in den Korrektheitskriterien bereits verankert. Die **zeitliche Perspektive** ist bewusst als nächster Ausbauschritt ausgewiesen (Abschnitt 3.8) und nicht stillschweigend als „erledigt" dargestellt.
+
+---
+
 ## 6. Zentrale Abläufe
 
 ### 6.1 Modellierung (Correctness by Construction)
@@ -583,6 +653,36 @@ Voraussetzungen für die Inbetriebnahme einer Vorlage (Release): keine Strukturf
 2. `createInstance(schemaVersion, startData)` erzeugt eine Instanz; Startknoten `ACTIVATED`.
 3. Engine-Schleife: aktivierte Aktivität ? Bearbeiter ermitteln/Worklist-Eintrag erzeugen ? Datenbindung der Inputs ? Executor ausführen ? Outputs schreiben ? Markierungsregeln anwenden ? Nachfolgerknoten `ACTIVATED` bzw. abgewählte XOR-Zweige `SKIPPED`.
 4. Endknoten erreicht und keine aktiven Knoten ? Instanz `COMPLETED`.
+
+#### 6.2.1 Lebenszyklus eines Arbeitslisten-Eintrags (Bearbeitersicht)
+
+Während das Knoten-Markierungsmodell (§4) den Ablauf aus **Prozesssicht** beschreibt, hat ein interaktiver Schritt zusätzlich einen Lebenszyklus aus **Bearbeitersicht** – den eines Arbeitslisten-Eintrags (Work Item). Dieser ist in der PAIS-Literatur als eigenständiges Zustandsmodell etabliert [Dum+13]; ProcWorks macht ihn explizit, weil daraus konkrete Tool-Anforderungen folgen (Abschnitt 13).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Offered: Schritt aktiviert, BZR liefert Bearbeitermenge
+    Offered --> Allocated: Bearbeiter übernimmt (claim)
+    Allocated --> Offered: zurückgeben (return)
+    Allocated --> Started: Bearbeitung beginnen
+    Started --> Suspended: pausieren
+    Suspended --> Started: fortsetzen
+    Started --> Completed: abschließen
+    Started --> Failed: Fehler
+    Failed --> Allocated: erneut zuweisen
+    Offered --> Withdrawn: durch anderen Bearbeiter übernommen
+    Withdrawn --> [*]
+    Completed --> [*]
+```
+
+- **Offered (angeboten):** Der aktivierte Schritt erscheint in der Arbeitsliste **aller** durch die Bearbeiterzuordnungsregel (Z1–Z3) ermittelten Agenten – als Angebot, noch nicht verbindlich zugewiesen.
+- **Allocated (übernommen):** Ein Agent übernimmt den Eintrag (`claim`). Damit wird der Eintrag bei den **übrigen** angebotenen Agenten **zurückgezogen** (`Withdrawn`) – genau das gewünschte „einer nimmt, die anderen sehen ihn nicht mehr"-Verhalten. Eine Rückgabe (`return`) macht ihn wieder allgemein verfügbar.
+- **Started (in Bearbeitung):** Die eigentliche Ausführung läuft; entspricht der Knotenmarkierung `RUNNING`.
+- **Suspended / Failed:** spiegeln die Laufzeit-Detailzustände des Knotens (§4) auf der Arbeitslisten-Ebene wider und ermöglichen Pausieren bzw. definierte Fehlerbehandlung.
+- **Completed (abgeschlossen):** Der Schritt ist fertig; Outputs sind geschrieben, die Markierungsregeln propagieren weiter.
+
+Jeder Eintrag trägt zusätzlich eine **Priorität** (abgeleitet aus Auswirkung und Dringlichkeit, §3.8), die die Sortierung der Arbeitsliste und die Frist je Eintrag bestimmt; bei Fristüberschreitung greifen die in §3.8 beschriebenen funktionalen bzw. hierarchischen Eskalationen.
+
+> Dieses Zustandsmodell ist die fachliche Grundlage für die geplante Arbeitslisten-Zustandsmaschine (Abschnitt 13). Die Übergänge `claim`/`return`/`complete` laufen – wie alle Eingriffe – ausschließlich über geprüfte API-Operationen (Abschnitt 7), nie an der Validierung vorbei.
 
 ### 6.3 Ad-hoc-Änderung einer Instanz
 
@@ -650,6 +750,16 @@ So erhält man genau das gewünschte Verhalten: Eine früh gestartete Instanz ü
 - **Nachvollziehbar:** Quell-/Zielversion, angewandtes Mapping, Entscheidung und Zeitpunkt werden im **Audit-/Event-Log** festgehalten (Basis für Monitoring & Revision).
 - **Reversibel auf Versionsebene:** Da `S_v1` immutable erhalten bleibt und die Migration atomar ist, lässt sich eine fehlgeschlagene Migration sauber verwerfen; die Instanz verbleibt definiert auf `S_v1`.
 - **Keine stille Korruption:** Es gibt keinen Pfad, auf dem eine Instanz teilweise migriert oder in einen schemafremden Zustand gerät – die Korrektheitsinvariante (Abschnitt 1.1) gilt auch über Versionsgrenzen hinweg.
+
+### 6.5 Einordnung der Flexibilitätsdimensionen
+
+Die Forschung unterscheidet Prozessflexibilität entlang dreier Dimensionen [DRR10][WRR08]. Die folgende Zuordnung zeigt, wie die in §6.1–§6.4 beschriebenen Mechanismen diese Dimensionen abdecken – übernommen ist dabei nur das allgemein anerkannte Ordnungsschema, in eigener Formulierung:
+
+- **Flexibilität zur Entwurfszeit:** Varianten und alternative Pfade werden bereits im Schema vorgesehen (Gateways, Sub-/Folgeprozesse). ProcWorks hält diese Flexibilität durch Stufe A **korrektheitserhaltend** – jede modellierte Variante ist bauartbedingt wohlstrukturiert.
+- **Flexibilität zur Ausführungszeit:** Einzelne laufende Instanzen weichen kontrolliert vom Schema ab – in ProcWorks die **Ad-hoc-Änderung** (§6.3), abgesichert über R1/R2, sodass auch die abgewichene Instanz korrekt bleibt.
+- **Prozessschemaevolution:** Der Prozesstyp selbst wird versioniert weiterentwickelt; laufende Instanzen werden bei Verträglichkeit migriert – in ProcWorks die **Schema-Evolution mit instanzindividueller Migration** (§6.4, M1–M5).
+
+> **Einordnung:** Die zentrale These der zitierten Arbeit [DRR10] – punktuelle Flexibilität allein genügt nicht, nötig ist durchgängige, korrektheitserhaltende Anpassbarkeit über alle drei Dimensionen – deckt sich mit dem Correctness-by-Construction-Ansatz: ProcWorks bietet in jeder Dimension nur Operationen an, die die Korrektheitsinvariante (Abschnitt 1.1) wahren.
 
 ---
 
@@ -805,6 +915,15 @@ Das Laufzeitgeschehen wird so dargestellt, dass der Zustand jeder Instanz **auf 
 - **Drill-down & Zeitreise.** Klick auf eine Instanz öffnet Detailsicht: Verlauf (Audit-Timeline), aktuelle Datenwerte, zuständige Bearbeiter, ggf. instanzspezifische Ad-hoc-Abweichungen vom Typ-Schema (hervorgehoben). „Zeitreise" zeigt den Markierungszustand zu jedem vergangenen Zeitpunkt.
 - **Kennzahlen/Analytics.** Aggregierte KPIs (Durchlaufzeiten, Engpässe, Fehlerquoten) – Datenbasis ist das Event-/Audit-Log (Abschnitt 5.3); optional Process-Mining-Auswertung.
 - **Eingriffe immer geprüft.** Aktionen aus dem Monitor (z. B. Ad-hoc-Änderung, Abbruch, Eskalation) laufen ausnahmslos über dieselben geprüften Operationen/Kontrakte (Abschnitt 7) – bequemer Zugang, gleiche Sicherheit.
+
+#### 8.4.1 Leistungssicht & Verbesserungsunterstützung
+
+Über die reine Statusanzeige hinaus liefert das Audit-Log die Datenbasis, um Prozesse **bewertbar** zu machen – die Voraussetzung für gezielte Verbesserung (Redesign). Zwei in der BPM-Literatur etablierte Denkrahmen strukturieren diese Sicht; ProcWorks übernimmt sie als KPI-Konzept (eigene Formulierung):
+
+- **Vier Leistungsdimensionen (Devil's Quadrangle).** Zeit, Kosten, Qualität und Flexibilität stehen in einem Spannungsverhältnis – eine Verbesserung in einer Dimension geht häufig zu Lasten einer anderen [Dum+13]. Das Monitoring stellt KPIs entlang dieser vier Achsen bereit (z. B. Durchlaufzeit, Bearbeitungskosten je Instanz, Fehler-/Nacharbeitsquote, Anteil ad-hoc-geänderter Instanzen als Flexibilitätsindikator), damit Verbesserungsentscheidungen ihre Wechselwirkungen sichtbar machen.
+- **Wertschöpfungs-Klassifikation von Aktivitäten.** Schritte lassen sich danach einordnen, ob sie **wertschöpfend**, **geschäftlich notwendig** (z. B. regulatorisch) oder **nicht wertschöpfend** (Wartezeiten, Übergaben, reine Kontrolle) sind – ein klassisches Kriterium der Prozessanalyse und des Business Process Reengineering [Dum+13][HC94]. Eine optionale Markierung je `ActivityTemplate`/Knoten erlaubt es, in der Prozesslandkarte den Anteil nicht wertschöpfender Schritte und ihre Liegezeiten hervorzuheben – als Ausgangspunkt für eine **neue Schema-Revision** (die dann regulär über §6.4 eingespielt wird).
+
+> **Abgrenzung:** ProcWorks **misst und visualisiert**; die Verbesserungsentscheidung bleibt fachlich. Jede daraus folgende Modelländerung läuft über den korrektheitsgesicherten Pfad (Change Operations + Release + Migration), nie als ungeprüfter Direkteingriff.
 
 ### 8.5 Instanzverwaltung & geführte Revisionsübernahme
 
@@ -1074,6 +1193,24 @@ flowchart TB
 15. **Monitoring/Audit** + optional Process Mining.
 16. **Web-Publikation & Deployment** – Container, Helm, Reverse Proxy/TLS, CI?CD (Abschnitt 11).
 
+### 13.1 Vorbereitete, konzeptgetriebene Erweiterungen (aus §2.4.1, §3.7/§3.8, §5.5, §6.2.1, §6.5, §8.4.1)
+
+Die folgenden Punkte ergeben sich unmittelbar aus den oben ergänzten Konzeptabschnitten. Sie sind hier **sauber vorbereitet** (Scope, Aufschlagpunkt im Code, Abhängigkeiten), aber bewusst noch **nicht** umgesetzt, um den bestehenden, vollständig grünen Kern nicht zu destabilisieren. Reihenfolge = empfohlene Umsetzungsfolge.
+
+| # | Erweiterung | Konzeptbezug | Vorgesehener Aufschlagpunkt (Code) | Scope/Risiko |
+|---|-------------|--------------|-----------------------------------|--------------|
+| E1 | **Arbeitslisten-Zustandsmaschine** (Offered ? Allocated ? Started ? Completed, plus Withdrawn/Suspended/Failed) inkl. `claim`/`return`/`complete` als geprüfte Operationen | §6.2.1 | `assignment.py` (Worklist-Auflösung), `execution.py` (Aktivierung), `model.py` (neuer `WorkItemState`), `operations.py`/`api.py` (Operationen) | mittel – additive Zustände + Operationen; bestehende Engine-Schleife bleibt Leitlogik |
+| E2 | **Aktivitäts-Detailzustände `SUSPENDED`/`FAILED`** im Ausführungsmodell vollständig führen (heute nur als Markierungs-Detailzustand beschrieben) | §4, §6.2.1 | `model.py` (`NodeState`/Marking-Enum), `execution.py` (Übergänge, Recovery) | gering–mittel – additiv; Markierungsregeln erweitern |
+| E3 | **Wertschöpfungs-Klassifikation** je `ActivityTemplate`/Knoten (`VALUE_ADDING` / `BUSINESS_NECESSARY` / `NON_VALUE_ADDING`) + Aggregation im Monitoring | §8.4.1 | `model.py` (optionales Feld), `audit.py`/Monitoring-Auswertung, Web-Dashboard | gering – rein additives, optionales Attribut |
+| E4 | **Leistungs-KPIs nach vier Dimensionen** (Zeit/Kosten/Qualität/Flexibilität) als Auswertung über das Audit-Log | §8.4.1 | Auswertungsschicht über `audit.py`, Read-Model/API-Endpunkt, Web-Dashboard | gering – nur lesende Aggregation |
+| E5 | **Zeitliche Perspektive (T1–T3):** Dauer-/Fristfelder im Meta-Modell, blocklokale Zeit-Konsistenzprüfung, Eskalations-/Benachrichtigungspfad | §3.8, §5.5 | `model.py` (Zeitattribute), `validator.py` (T1–T3, neue Kriteriengruppe analog K/D), `execution.py` (Timer/Eskalation) | höher – neue Validierungsgruppe + Laufzeit-Timer; eigenes Inkrement |
+| E6 | **Simulations-/Vorschau-Modus** zur Unterstützung der semantischen Validierung (Token-Durchlauf ohne Seiteneffekte) | §3.7 | neuer „Dry-run"-Pfad über `execution.py`, read-only; API-Endpunkt; Animation im Web-Monitor | mittel – muss strikt seiteneffektfrei sein |
+| E7 | **Modellmetriken & 7PMG-Hinweise** (Größe, Verschachtelungstiefe, Gateway-Heterogenität) als nicht-blockierende Editor-Hinweise | §2.4.1 | `validator.py` (reine Kennzahlen, keine Stufe-A/B-Erzwingung), Editor-Badges | gering – nur Hinweise, keine Erzwingung |
+| E8 | **Arbeitslisten-Priorität** (`Priorität = Auswirkung + Dringlichkeit`) mit Sortierung und prioritätsabhängiger Frist je Eintrag | §3.8, §6.2.1 | `model.py` (Prioritäts-/Auswirkung-/Dringlichkeitsfelder), `assignment.py` (Worklist-Sortierung), Web-Arbeitsliste | gering–mittel – additive Felder + Sortierung |
+| E9 | **Mehrstufige Eskalation** (funktional/horizontal vs. hierarchisch/vertikal, zeitgesteuert bei Fristüberschreitung) | §3.8 (T3), §6.2.1 | `execution.py` (Timer/Eskalationsauslösung), `assignment.py` (Ziel-Bearbeitermenge), `audit.py` (Protokollierung) | höher – an E5 (Zeitperspektive) gekoppelt; eigenes Inkrement |
+
+> **Leitplanke:** Alle Punkte sind **additiv** und ändern die bestehende Correctness-by-Construction-Invariante nicht. E1/E2/E5/E9 berühren Laufzeit-/Validierungslogik und erhalten je ein eigenes Inkrement mit eigenen Tests; E3/E4/E7/E8 sind weitgehend lesend/optional. Kein Punkt entfernt oder lockert ein bestehendes Kriterium (K/D/Z/B/R/M, H/F).
+
 ---
 
 ## 14. Glossar
@@ -1102,6 +1239,23 @@ flowchart TB
 - **Dadam, P.; Reichert, M.; Rinderle-Ma, S.; u. a.:** Publikationen zum **ADEPT-Projekt** (Universität Ulm) zu „Correctness by Construction" sowie zur flexiblen, robusten Ausführung von Unternehmensprozessen (u. a. EMISA-Forum). Grundlage für: Motivation/Herausforderungen (Robustheit, Flexibilität, Benutzbarkeit), ADEPT-Meta-Modell, High-Level-Änderungsoperationen, SOA-Architektur, Schema-Evolution.
 - **Reichert, M.:** Vorlesung *Business Process Management*, Kapitel 9 – Implementierung prozessorientierter Informationssysteme. Grundlage für: Anforderungen an Modellierungssprachen, Struktur-/Ausführungsregeln, Zustands-/Markierungsmodell, Datenfluss, Bearbeiterzuordnung/OrgModel, Ausführungsumgebung, Activity Templates, Inbetriebnahme.
 - **Reichert, M.:** *Dynamische Ablaufänderungen in Workflow-Management-Systemen.* Dissertation, Universität Ulm, 2000 (formale Struktur- und Ausführungsregeln).
-- **Reichert, M.; Weber, B.:** *Enabling Flexibility in Process-Aware Information Systems.* Springer, 2012.
+- **Reichert, M.; Weber, B.:** *Enabling Flexibility in Process-Aware Information Systems.* Springer, 2012. (Zitierschlüssel **[RW12]**: PAIS-Einordnung, Prozessperspektiven, zeitliche Perspektive.)
 - OMG BPMN 2.0 / ISO 19510 (Übersicht zu BPMN 2.0).
 - Weske, M.: *Business Process Management: Concepts, Languages, Architectures.* Dumas et al.: *Process-Aware Information Systems.*
+
+### 15.1 Ergänzende Fachliteratur (Zitierschlüssel)
+
+Die folgenden Quellen sind die in Abschnitt 2.4.1, 3.7/3.8, 5.5, 6.2.1, 6.5 und 8.4.1 verwendeten Originalwerke. Übernommen wurden ausschließlich allgemein anerkannte Konzepte und Begriffe (in eigener Formulierung); es wurde kein geschützter Text übernommen.
+
+- **[LSS94]** Lindland, O. I.; Sindre, G.; Sølvberg, A.: *Understanding Quality in Conceptual Modeling.* IEEE Software, 11(2), 1994 (semiotischer Qualitätsrahmen: syntaktisch/semantisch/pragmatisch).
+- **[KSJ06]** Krogstie, J.; Sindre, G.; Jørgensen, H.: *Process Models Representing Knowledge for Action: A Revised Quality Framework.* European Journal of Information Systems, 15(1), 2006 (SEQUAL – revidierter semiotischer Qualitätsrahmen).
+- **[Ros96]** Rosemann, M.: *Komplexitätsmanagement in Prozessmodellen.* Gabler, 1996 (Grundsätze ordnungsmäßiger Modellierung – GoM).
+- **[BRU00]** Becker, J.; Rosemann, M.; von Uthmann, C.: *Guidelines of Business Process Modeling.* In: Business Process Management, LNCS 1806, Springer, 2000 (Präzisierung der GoM für die Prozessmodellierung).
+- **[MRA10]** Mendling, J.; Reijers, H. A.; van der Aalst, W. M. P.: *Seven Process Modeling Guidelines (7PMG).* Information and Software Technology, 52(2), 2010.
+- **[MNV07]** Mendling, J.; Neumann, G.; van der Aalst, W. M. P.: *Understanding the Occurrence of Errors in Process Models Based on Metrics.* In: OTM/CoopIS, LNCS 4803, Springer, 2007.
+- **[Dum+13]** Dumas, M.; La Rosa, M.; Mendling, J.; Reijers, H. A.: *Fundamentals of Business Process Management.* Springer, 2013 (Prozessperspektiven, Work-Item-Lebenszyklus, Devil's Quadrangle, Wertschöpfungsanalyse).
+- **[HC94]** Hammer, M.; Champy, J.: *Reengineering the Corporation.* HarperBusiness, 1994 (Business Process Reengineering, Wertschöpfungsbetrachtung).
+- **[LRW16]** Lanz, A.; Reichert, M.; Weber, B.: *Process Time Patterns: A Formal Foundation.* Information Systems, 57, 2016 (zeitliche Perspektive/Time Patterns).
+- **[WRR08]** Weber, B.; Reichert, M.; Rinderle-Ma, S.: *Change Patterns and Change Support Features – Enhancing Flexibility in Process-Aware Information Systems.* Data & Knowledge Engineering, 66(3), 2008 (Änderungsmuster, Flexibilitätsdimensionen).
+- **[DRR10]** Dadam, P.; Reichert, M.; Rinderle-Ma, S.: *Nur ein wenig Flexibilität wird nicht reichen – Überlegungen zur Realisierung flexibler Prozessmanagement-Systeme.* Informatik-Spektrum, 33(4), 2010 (drei Flexibilitätsdimensionen: Entwurfszeit/Ausführungszeit/Schemaevolution).
+- **[Olb12]** Olbrich, A.: *ITIL kompakt und verständlich.* Vieweg+Teubner, 2012 (allgemeine ITIL-Konzepte: funktionale/hierarchische Eskalation, Priorität = Auswirkung + Dringlichkeit, SLA-Zeiten).

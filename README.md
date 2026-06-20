@@ -147,10 +147,10 @@ Implementierung. Es übernimmt aus der Forschung **nur Konzepte**, keinen Code:
   K/D/Z/B-Kriterien, High-Level-Operationen, Markierungssemantik, Migration)
   stammen aus **veröffentlichter Forschung** (ADEPT2, Universität Ulm) und dem
   **offenen OMG-Standard BPMN 2.0** und sind in eigenem Python neu umgesetzt.
-  **Kein ADEPT-/AristaFlow-Quellcode** wird verwendet, kopiert oder abgeleitet.
+  **Kein ADEPT-Quellcode** wird verwendet, kopiert oder abgeleitet.
   Die akademischen Quellen sind in
   [docs/Architektur-Konzept-Prozessmodellierung.md](docs/Architektur-Konzept-Prozessmodellierung.md)
-  (§15) belegt. „ADEPT" und „AristaFlow" werden ausschließlich **nennend/
+  (§15) belegt. „ADEPT" wird ausschließlich **nennend/
   beschreibend** zur Würdigung der zugrunde liegenden Forschung verwendet; es
   besteht **keine** Verbindung, Partnerschaft oder Billigung durch deren Inhaber.
 - **Geschütztes Quellmaterial bleibt draußen.** Forschungs-PDFs und daraus

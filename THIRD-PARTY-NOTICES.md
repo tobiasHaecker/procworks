@@ -73,10 +73,10 @@ follow each project's own published metadata at the time of writing.
   *research idea* ProcWorks draws on. Only published **concepts** (block
   structure, correctness criteria, high-level change operations, marking
   semantics, migration criteria) are referenced and re-implemented from scratch
-  in original Python — **no ADEPT/AristaFlow source code** is used, copied or
+  in original Python — **no ADEPT source code** is used, copied or
   derived. Academic sources are cited in
   [docs/Architektur-Konzept-Prozessmodellierung.md](docs/Architektur-Konzept-Prozessmodellierung.md),
-  §15. "ADEPT" and "AristaFlow" are referenced only nominatively/descriptively
+  §15. "ADEPT" is referenced only nominatively/descriptively
   to credit the underlying research; ProcWorks claims no affiliation with or
   endorsement by their owners.
 - **Business Source License 1.1** text is © 2017 MariaDB Corporation Ab;
