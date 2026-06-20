@@ -468,7 +468,103 @@ function viewModel() {
   content.appendChild(header);
   content.appendChild(el("div", { class: "grid-2" },
     el("div", { class: "panel" }, el("div", { class: "panel-h" }, el("h2", null, "Kontrollfluss")), el("div", { class: "panel-b" }, graph), hint),
-    el("div", null, findingsPanel(), revisionPanel())));
+    el("div", null, nodeInspectorPanel(), findingsPanel(), revisionPanel())));
+
+  // Nach dem (Neu-)Rendern den ausgewaehlten Knoten in die Mitte der scrollbaren
+  // Canvas ruecken, statt nach links auf den Start zurueckzuspringen.
+  if (state.selectedNode) {
+    const pos = layoutSchema(schema).pos[state.selectedNode];
+    if (pos) requestAnimationFrame(() => centerCanvasOnNode(graph, pos));
+  }
+}
+
+function centerCanvasOnNode(wrap, pos) {
+  // ``wrap`` ist die scrollbare .canvas-wrap; die Layout-Koordinaten bilden im
+  // Ueberlauf-Fall 1:1 auf Pixel ab (SVG-Breite == Layout-Breite).
+  const cx = pos.x + pos.w / 2;
+  const cy = pos.y + pos.h / 2;
+  wrap.scrollLeft = Math.max(0, cx - wrap.clientWidth / 2);
+  wrap.scrollTop = Math.max(0, cy - wrap.clientHeight / 2);
+}
+
+// --------------------------------------------------------------------------
+// Knoten-Inspektor (Aktivitaet umbenennen / Element entfernen)
+// --------------------------------------------------------------------------
+
+const SPLIT_TYPES = new Set([NODE_TYPE.AND_SPLIT, NODE_TYPE.XOR_SPLIT]);
+
+function nodeInspectorPanel() {
+  const schema = state.schema;
+  const draft = isDraft(schema);
+  const body = el("div", { class: "panel-b" });
+  const node = state.selectedNode ? schema.nodes[state.selectedNode] : null;
+
+  if (!node) {
+    body.appendChild(el("div", { class: "muted", style: "font-size:12px" },
+      draft
+        ? "Klicke einen Knoten an, um ihn umzubenennen oder zu entfernen."
+        : "Klicke einen Knoten an, um zu ihm zu scrollen. Bearbeiten ist nur im Entwurf m\u00F6glich."));
+    return el("div", { class: "panel" },
+      el("div", { class: "panel-h" }, el("h2", null, "Knoten")), body);
+  }
+
+  body.appendChild(el("div", { class: "row", style: "gap:8px;align-items:center;margin-bottom:10px" },
+    el("span", { class: "pill pill-gray" }, node.type),
+    el("strong", null, nodeCaption(node))));
+
+  const renamable = node.type === NODE_TYPE.ACTIVITY || node.type === NODE_TYPE.SUBPROCESS;
+  if (!draft) {
+    body.appendChild(el("div", { class: "muted", style: "font-size:12px" },
+      "Schema ist freigegeben \u2013 Bearbeiten erst in einer neuen Revision m\u00F6glich."));
+  } else if (renamable) {
+    const input = el("input", { type: "text", value: node.label || "" });
+    body.appendChild(el("label", { class: "field" }, "Bezeichnung", input));
+    body.appendChild(el("div", { class: "row", style: "gap:8px" },
+      el("button", { class: "btn small primary", onClick: () => renameNode(node.id, input.value) }, "Umbenennen"),
+      el("button", { class: "btn small danger", onClick: () => deleteNode(node.id) }, "Entfernen")));
+  } else if (SPLIT_TYPES.has(node.type)) {
+    body.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:8px" },
+      "Verzweigung: Entfernen l\u00F6scht den gesamten Block (Split, Zweige und passenden Join)."));
+    body.appendChild(el("button", { class: "btn small danger", onClick: () => deleteNode(node.id) }, "Verzweigung entfernen"));
+  } else {
+    body.appendChild(el("div", { class: "muted", style: "font-size:12px" },
+      node.type === NODE_TYPE.AND_JOIN || node.type === NODE_TYPE.XOR_JOIN
+        ? "Join-Knoten werden \u00FCber ihren \u00F6ffnenden Split entfernt."
+        : "Start und Ende sind fester Bestandteil des Modells."));
+  }
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Knoten"),
+      el("span", { class: "spacer", style: "flex:1" }),
+      el("button", { class: "btn small ghost", onClick: () => { state.selectedNode = null; render(); } }, "Abw\u00E4hlen")),
+    body);
+}
+
+async function renameNode(nodeId, label) {
+  const name = (label || "").trim();
+  if (!name) { toast("err", "Bezeichnung darf nicht leer sein"); return; }
+  try {
+    await api.patch(`/schemas/${state.schemaId}/nodes/${nodeId}`, { label: name });
+    await refreshSchema();
+    render();
+    toast("ok", "Aktivit\u00E4t umbenannt", [name]);
+  } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
+}
+
+function deleteNode(nodeId) {
+  const node = state.schema.nodes[nodeId];
+  const isSplit = SPLIT_TYPES.has(node.type);
+  const msg = isSplit
+    ? "Den gesamten Verzweigungsblock (Split, alle Zweige und den passenden Join) entfernen?"
+    : `\u201E${nodeCaption(node)}\u201C aus dem Modell entfernen?`;
+  openModal("Element entfernen", el("div", { class: "muted", style: "font-size:13px" }, msg), async () => {
+    try {
+      await api.del(`/schemas/${state.schemaId}/nodes/${nodeId}`);
+      state.selectedNode = null;
+      await refreshSchema();
+      render();
+      toast("ok", "Element entfernt");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Entfernen");
 }
 
 function validationBadge() {

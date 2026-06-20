@@ -14,8 +14,10 @@ import pytest
 from procworks import (
     conditional_insert,
     create_empty_schema,
+    delete_node,
     parallel_insert,
     release,
+    rename_node,
     serial_insert,
     validate,
 )
@@ -129,3 +131,107 @@ def test_released_schema_is_not_editable() -> None:
     released = release(schema)
     with pytest.raises(CorrectnessError):
         serial_insert(released, "X", after_node_id="start")
+
+
+def test_rename_node_changes_label() -> None:
+    schema = create_empty_schema("Umbenennen")
+    schema = serial_insert(schema, "Alt", after_node_id="start")
+    act = next(n for n in schema.nodes.values() if n.type is NodeType.ACTIVITY)
+    schema = rename_node(schema, act.id, "Neu")
+    assert schema.nodes[act.id].label == "Neu"
+    assert validate(schema) == []
+
+
+def test_rename_node_rejects_gateway() -> None:
+    schema = create_empty_schema("Umbenennen")
+    schema = parallel_insert(schema, ["A", "B"], after_node_id="start")
+    split = next(n for n in schema.nodes.values() if n.type is NodeType.AND_SPLIT)
+    with pytest.raises(CorrectnessError):
+        rename_node(schema, split.id, "x")
+
+
+def test_rename_node_on_released_schema_is_rejected() -> None:
+    schema = create_empty_schema("Umbenennen")
+    schema = serial_insert(schema, "S", after_node_id="start")
+    act = next(n for n in schema.nodes.values() if n.type is NodeType.ACTIVITY)
+    released = release(schema)
+    with pytest.raises(CorrectnessError):
+        rename_node(released, act.id, "Neu")
+
+
+def test_delete_serial_activity_closes_gap() -> None:
+    schema = create_empty_schema("Loeschen")
+    schema = serial_insert(schema, "A", after_node_id="start")
+    schema = serial_insert(schema, "B", after_node_id="start")
+    target = next(n for n in schema.nodes.values() if n.label == "B")
+    schema = delete_node(schema, target.id)
+    assert target.id not in schema.nodes
+    assert validate(schema) == []
+    labels = {n.label for n in schema.nodes.values() if n.type is NodeType.ACTIVITY}
+    assert labels == {"A"}
+
+
+def test_delete_split_removes_whole_block() -> None:
+    schema = create_empty_schema("BlockLoeschen")
+    schema = parallel_insert(schema, ["X", "Y"], after_node_id="start")
+    split = next(n for n in schema.nodes.values() if n.type is NodeType.AND_SPLIT)
+    schema = delete_node(schema, split.id)
+    # only START and END remain; the balanced block is gone as a unit
+    assert set(n.type for n in schema.nodes.values()) == {NodeType.START, NodeType.END}
+    assert validate(schema) == []
+
+
+def test_delete_split_removes_nested_block() -> None:
+    schema = create_empty_schema("Verschachtelt")
+    schema = conditional_insert(
+        schema, [("x > 1", "P"), ("x <= 1", "Q")], after_node_id="start"
+    )
+    xsplit = next(n for n in schema.nodes.values() if n.type is NodeType.XOR_SPLIT)
+    pbranch = next(n for n in schema.nodes.values() if n.label == "P")
+    schema = parallel_insert(schema, ["P1", "P2"], after_node_id=pbranch.id)
+    assert validate(schema) == []
+    schema = delete_node(schema, xsplit.id)
+    assert set(n.type for n in schema.nodes.values()) == {NodeType.START, NodeType.END}
+    assert validate(schema) == []
+
+
+def test_delete_join_directly_is_rejected() -> None:
+    schema = create_empty_schema("JoinLoeschen")
+    schema = parallel_insert(schema, ["A", "B"], after_node_id="start")
+    join = next(n for n in schema.nodes.values() if n.type is NodeType.AND_JOIN)
+    with pytest.raises(CorrectnessError):
+        delete_node(schema, join.id)
+
+
+def test_delete_start_or_end_is_rejected() -> None:
+    schema = create_empty_schema("EndpunktLoeschen")
+    with pytest.raises(CorrectnessError):
+        delete_node(schema, "start")
+    with pytest.raises(CorrectnessError):
+        delete_node(schema, "end")
+
+
+def test_delete_on_released_schema_is_rejected() -> None:
+    schema = create_empty_schema("Loeschen")
+    schema = serial_insert(schema, "S", after_node_id="start")
+    act = next(n for n in schema.nodes.values() if n.type is NodeType.ACTIVITY)
+    released = release(schema)
+    with pytest.raises(CorrectnessError):
+        delete_node(released, act.id)
+
+
+def test_delete_node_drops_dependent_bindings() -> None:
+    from procworks import add_data_element, assign_service, connect_data
+    from procworks.model import AccessMode, DataType
+
+    schema = create_empty_schema("Bindungen")
+    schema = serial_insert(schema, "A", after_node_id="start")
+    act = next(n for n in schema.nodes.values() if n.type is NodeType.ACTIVITY)
+    schema = add_data_element(schema, "betrag", DataType.FLOAT)
+    elem = next(iter(schema.data_elements.values()))
+    schema = connect_data(schema, act.id, elem.id, AccessMode.WRITE)
+    schema = assign_service(schema, act.id, "Pruefdienst")
+    schema = delete_node(schema, act.id)
+    assert act.id not in schema.service_bindings
+    assert all(a.node_id != act.id for a in schema.data_accesses)
+    assert validate(schema) == []

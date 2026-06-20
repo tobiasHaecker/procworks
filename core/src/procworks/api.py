@@ -295,6 +295,10 @@ class ConditionalInsertRequest(BaseModel):
     after_node_id: str = Field(..., examples=["start"])
 
 
+class RenameNodeRequest(BaseModel):
+    label: str = Field(..., examples=["Antrag genehmigen"])
+
+
 class AddDataElementRequest(BaseModel):
     name: str = Field(..., examples=["betrag"])
     data_type: DataType = Field(..., examples=[DataType.FLOAT])
@@ -784,6 +788,28 @@ def post_conditional_insert(schema_id: str, req: ConditionalInsertRequest) -> Pr
     schema = _get_or_404(schema_id)
     branches = [(b.condition, b.label) for b in req.branches]
     return _commit_or_422(lambda: ops.conditional_insert(schema, branches, req.after_node_id))
+
+
+@app.patch(
+    "/schemas/{schema_id}/nodes/{node_id}",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def patch_rename_node(
+    schema_id: str, node_id: str, req: RenameNodeRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(lambda: ops.rename_node(schema, node_id, req.label))
+
+
+@app.delete(
+    "/schemas/{schema_id}/nodes/{node_id}",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def delete_schema_node(schema_id: str, node_id: str) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(lambda: ops.delete_node(schema, node_id))
 
 
 @app.post(

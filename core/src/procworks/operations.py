@@ -16,6 +16,8 @@ from __future__ import annotations
 import itertools
 
 from procworks.model import (
+    JOIN_TYPES,
+    SPLIT_TYPES,
     AccessMode,
     ActivityTemplate,
     Agent,
@@ -239,6 +241,155 @@ def _insert_block(
         )
         candidate.edges.append(ControlEdge(source=branch.id, target=join.id))
 
+    return raise_if_invalid(candidate)
+
+
+def rename_node(schema: ProcessSchema, node_id: str, label: str) -> ProcessSchema:
+    """Change the label of an ACTIVITY or SUBPROCESS node.
+
+    requires: schema editable (R0); node exists and is an ACTIVITY or
+              SUBPROCESS (START/END and gateways carry generated captions, so
+              they are not renamable).
+    ensures:  the node's label is updated; the schema stays correct (K/D/Z
+              unaffected -- relabelling never changes structure).
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type not in (NodeType.ACTIVITY, NodeType.SUBPROCESS):
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="only ACTIVITY or SUBPROCESS nodes can be renamed",
+                )
+            ]
+        )
+    node.label = label
+    return raise_if_invalid(candidate)
+
+
+def _matching_block(schema: ProcessSchema, split_id: str) -> tuple[str, set[str]]:
+    """Return ``(matching_join_id, inner_node_ids)`` for a split gateway.
+
+    Walks forward from the split while balancing nested splits/joins; because
+    the graph is block-structured (K1), exactly one join closes the block. The
+    inner ids are the branch bodies strictly between split and join (both
+    gateways excluded).
+    """
+
+    inner: set[str] = set()
+    matching_join: str | None = None
+    stack: list[tuple[str, int]] = [(e.target, 0) for e in schema.outgoing(split_id)]
+    while stack:
+        node_id, depth = stack.pop()
+        node = schema.nodes[node_id]
+        if node.type in JOIN_TYPES and depth == 0:
+            matching_join = node_id
+            continue
+        if node_id in inner:
+            continue
+        inner.add(node_id)
+        next_depth = depth
+        if node.type in SPLIT_TYPES:
+            next_depth += 1
+        elif node.type in JOIN_TYPES:
+            next_depth -= 1
+        for edge in schema.outgoing(node_id):
+            stack.append((edge.target, next_depth))
+    if matching_join is None:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=split_id,
+                    message=f"no matching join found for split '{split_id}'",
+                )
+            ]
+        )
+    return matching_join, inner
+
+
+def delete_node(schema: ProcessSchema, node_id: str) -> ProcessSchema:
+    """Delete a node from a draft, closing the resulting gap.
+
+    requires: schema editable (R0); node exists and is not START/END; a JOIN
+              must be removed via its opening SPLIT, not directly; an
+              ACTIVITY/SUBPROCESS must sit on a serial stretch (one in, one
+              out).
+    ensures:  for an ACTIVITY/SUBPROCESS the predecessor is reconnected to the
+              successor; for a SPLIT the whole balanced block (split, branch
+              bodies and matching join) is removed as a unit and the gap is
+              closed. Dependent data accesses, staff rules and service/
+              sub-process bindings of every removed node are dropped. The
+              result is validated (validate-before-commit): a deletion that
+              would orphan a still-needed data write is rejected (D1) -- this
+              keeps Correctness by Construction across deletions.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type in (NodeType.START, NodeType.END):
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP", node_id=node_id, message="cannot delete START or END"
+                )
+            ]
+        )
+    if node.type in JOIN_TYPES:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="delete the opening split to remove the whole branch block",
+                )
+            ]
+        )
+
+    if node.type in SPLIT_TYPES:
+        join_id, inner = _matching_block(candidate, node_id)
+        to_remove = {node_id, join_id} | inner
+        predecessor_id = candidate.incoming(node_id)[0].source
+        successor_id = candidate.outgoing(join_id)[0].target
+    else:
+        incoming = candidate.incoming(node_id)
+        outgoing = candidate.outgoing(node_id)
+        if len(incoming) != 1 or len(outgoing) != 1:
+            raise CorrectnessError(
+                [
+                    ValidationFinding(
+                        rule="OP",
+                        node_id=node_id,
+                        message=(
+                            f"node '{node_id}' is not on a serial stretch "
+                            "(one in/one out)"
+                        ),
+                    )
+                ]
+            )
+        to_remove = {node_id}
+        predecessor_id = incoming[0].source
+        successor_id = outgoing[0].target
+
+    for removed in to_remove:
+        del candidate.nodes[removed]
+        candidate.staff_rules.pop(removed, None)
+        candidate.service_bindings.pop(removed, None)
+        candidate.sub_process_bindings.pop(removed, None)
+    candidate.data_accesses = [
+        a for a in candidate.data_accesses if a.node_id not in to_remove
+    ]
+    candidate.edges = [
+        e
+        for e in candidate.edges
+        if e.source not in to_remove and e.target not in to_remove
+    ]
+    candidate.edges.append(ControlEdge(source=predecessor_id, target=successor_id))
     return raise_if_invalid(candidate)
 
 

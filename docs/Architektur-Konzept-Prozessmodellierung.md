@@ -686,7 +686,10 @@ operation op(model M, params P):
 | `insertBetweenNodeSets(act, srcSet, dstSet)` | `srcSet`/`dstSet` liegen in verschiedenen Zweigen; erzeugt keinen Zyklus außerhalb LOOP | `act` korrekt eingebettet; Sync-Kanten nur zwischen AND-Zweigen (K4) |
 | `addSyncEdge(srcAct, dstAct)` | beide Aktivitäten in **verschiedenen** AND-Zweigen desselben AND-Blocks; keine Zyklusbildung | SOFT/HARD-Sync-Kante; `dst` wartet auf `src` (bzw. dessen Abwahl) – K4 erhalten |
 | `deleteNode(node)` | `node ? START/END`; bei Split/Join wird der **gesamte Block** als Einheit entfernt | Knoten + verwaiste Daten-/Sync-Kanten entfernt; Lücke geschlossen; K1–K4, D1–D5 erhalten |
+| `renameNode(node, label)` | `node` ist Aktivität oder Teilprozess; Schema editierbar (R0) | nur `label` geändert; Struktur unverändert; K/D-Regeln trivial erhalten |
 | `moveNode(node, targetPos)` | Quelle/Ziel wohlgeformt; Move erzeugt keine Daten-Vorwärtsreferenz (D1) | `node` an neuer Position; alle K/D-Regeln erhalten |
+
+> **Implementierungsstand.** `serialInsert`, `parallelInsert`, `conditionalInsert`, `deleteNode` und `renameNode` sind im Kern (`procworks.operations`) sowie über die HTTP-API (`POST …/serial-insert`, `…/parallel-insert`, `…/conditional-insert`, `PATCH /schemas/{id}/nodes/{nodeId}`, `DELETE /schemas/{id}/nodes/{nodeId}`) und im Web-Editor umgesetzt. `deleteNode` entfernt bei einem Split den gesamten von ihm und seinem passenden Join eingeschlossenen SESE-Block (inkl. aller Zweigknoten und davon abhängiger Staff-/Service-/Daten-Bindungen); Aktivitäten/Teilprozesse werden nur auf serieller Strecke entfernt und die Lücke geschlossen. Jede Mutation läuft unverändert über *validate-before-commit*. `moveNode`, `insertLoop`, `insertBetweenNodeSets` und Sync-Kanten sind weiterhin spezifiziert, aber noch nicht implementiert.
 
 ### 7.3 Datenfluss-Operationen
 

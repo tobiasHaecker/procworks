@@ -9,6 +9,21 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- Modellbearbeitung im Web-Editor: ausgewählte Knoten lassen sich jetzt direkt
+  umbenennen und entfernen. Zwei neue korrektheitserhaltende Kern-Operationen
+  `rename_node(schema, node_id, label)` (nur Aktivität/Teilprozess, Schema muss
+  editierbar sein) und `delete_node(schema, node_id)` über `validate-before-commit`.
+  `delete_node` entfernt eine Aktivität/einen Teilprozess nur auf serieller
+  Strecke und schließt die Lücke; bei einem Split wird der gesamte von Split und
+  passendem Join eingeschlossene SESE-Block samt Zweigknoten und davon
+  abhängiger Staff-/Service-/Daten-Bindungen entfernt. Start/Ende und Join-Knoten
+  sind geschützt. Neue API-Endpunkte `PATCH /schemas/{id}/nodes/{nodeId}` und
+  `DELETE /schemas/{id}/nodes/{nodeId}`. Web-Client: neues „Knoten"-Panel in der
+  Modellierungssicht mit Umbenennen-Feld und Entfernen-Aktion (Verzweigung
+  entfernt den ganzen Block).
+- Beim Auswählen eines Knotens wird das Modell so verschoben, dass das selektierte
+  Element in der Mitte der Kontrollfluss-Ansicht liegt (kein Zurückspringen mehr
+  an den Anfang).
 - Passwort-Login für eigenständige Deployments ohne externen Identity-Provider
   (Auth-Konzept Abschnitt 11): drittes `AuthBackend` `PasswordAuthBackend`
   (`PROCWORKS_AUTH=password`). Login-Name wird aus dem Agentennamen vorgeschlagen

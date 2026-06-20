@@ -80,7 +80,8 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   unbedenklich, da der Client keine Korrektheitslogik trägt).
 - **Web-Client** (`../web/`): ein schlanker **No-Build**-Web-Client (reines
   HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Sechs
-  Sichten — Modellieren (geführte +-Operationen, live validiert),
+  Sichten — Modellieren (geführte +-Operationen, live validiert; Knoten
+  umbenennen/entfernen, Auswahl wird zentriert),
   Datensicht, Ressourcensicht (Organisation als Baumstruktur mit Abteilungen,
   Vorgesetzten und Umhängen-Dialog; Agenten samt Vertreter in eigener Tabelle),
   Ausführung (Worklist + Live-Prozesslandkarte), Meine Aufgaben
@@ -260,6 +261,8 @@ POST /schemas/{id}/conditional-insert
        "branches": [ { "condition": "betrag > 1000", "label": "Freigabe Leitung" },
                      { "condition": "betrag <= 1000", "label": "Freigabe Team" } ] }
 GET  /schemas/{id}/validation       -> { "correct": true, "findings": [] }
+PATCH  /schemas/{id}/nodes/{nodeId} { "label": "Antrag fachlich prüfen" }  -> Aktivität umbenennen
+DELETE /schemas/{id}/nodes/{nodeId}                                          -> Knoten/Block entfernen
 POST /schemas/{id}/release          -> lifecycle_state = RELEASED (immutable)
 ```
 

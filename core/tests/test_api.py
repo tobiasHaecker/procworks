@@ -56,6 +56,49 @@ def test_invalid_operation_returns_422() -> None:
     assert "findings" in resp.json()["detail"]
 
 
+def test_rename_and_delete_node_via_api() -> None:
+    sid = client.post("/schemas", json={"name": "Bearbeiten"}).json()["id"]
+    client.post(f"/schemas/{sid}/serial-insert", json={"label": "Alt", "after_node_id": "start"})
+    schema = client.get(f"/schemas/{sid}").json()
+    act_id = next(nid for nid, n in schema["nodes"].items() if n["type"] == "ACTIVITY")
+
+    resp = client.patch(f"/schemas/{sid}/nodes/{act_id}", json={"label": "Neu"})
+    assert resp.status_code == 200
+    assert resp.json()["nodes"][act_id]["label"] == "Neu"
+
+    resp = client.delete(f"/schemas/{sid}/nodes/{act_id}")
+    assert resp.status_code == 200
+    assert act_id not in resp.json()["nodes"]
+    assert client.get(f"/schemas/{sid}/validation").json()["correct"] is True
+
+
+def test_delete_join_via_api_returns_422() -> None:
+    sid = client.post("/schemas", json={"name": "JoinDel"}).json()["id"]
+    client.post(
+        f"/schemas/{sid}/parallel-insert",
+        json={"branch_labels": ["A", "B"], "after_node_id": "start"},
+    )
+    schema = client.get(f"/schemas/{sid}").json()
+    join_id = next(nid for nid, n in schema["nodes"].items() if n["type"] == "AND_JOIN")
+    resp = client.delete(f"/schemas/{sid}/nodes/{join_id}")
+    assert resp.status_code == 422
+    assert "findings" in resp.json()["detail"]
+
+
+def test_delete_split_via_api_removes_block() -> None:
+    sid = client.post("/schemas", json={"name": "BlockDel"}).json()["id"]
+    client.post(
+        f"/schemas/{sid}/parallel-insert",
+        json={"branch_labels": ["A", "B"], "after_node_id": "start"},
+    )
+    schema = client.get(f"/schemas/{sid}").json()
+    split_id = next(nid for nid, n in schema["nodes"].items() if n["type"] == "AND_SPLIT")
+    resp = client.delete(f"/schemas/{sid}/nodes/{split_id}")
+    assert resp.status_code == 200
+    types = {n["type"] for n in resp.json()["nodes"].values()}
+    assert types == {"START", "END"}
+
+
 def test_release_via_api_then_immutable() -> None:
     sid = client.post("/schemas", json={"name": "R"}).json()["id"]
     client.post(f"/schemas/{sid}/serial-insert", json={"label": "S", "after_node_id": "start"})
