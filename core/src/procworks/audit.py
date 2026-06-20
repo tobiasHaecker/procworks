@@ -69,6 +69,8 @@ class AuditLog(Protocol):
 
     def for_instance(self, instance_id: str) -> list[AuditEvent]: ...
 
+    def clear(self) -> None: ...
+
 
 class InMemoryAuditLog:
     """A trivial list-backed event log with a monotonic sequence counter."""
@@ -110,6 +112,10 @@ class InMemoryAuditLog:
 
     def for_instance(self, instance_id: str) -> list[AuditEvent]:
         return [e for e in self._events if e.instance_id == instance_id]
+
+    def clear(self) -> None:
+        self._events.clear()
+        self._seq = 0
 
 
 def create_audit_log() -> AuditLog:

@@ -27,6 +27,7 @@ from sqlalchemy import (
     Integer,
     String,
     create_engine,
+    delete,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -101,6 +102,11 @@ class SqlAlchemySchemaStore:
         with Session(self._engine) as session:
             return list(session.scalars(select(SchemaRow.id)))
 
+    def clear(self) -> None:
+        with Session(self._engine) as session:
+            session.execute(delete(SchemaRow))
+            session.commit()
+
 
 class OrgRow(Base):
     """One row per shared, standalone org model (keyed by org id)."""
@@ -149,6 +155,11 @@ class SqlAlchemyOrgStore:
     def list_ids(self) -> list[str]:
         with Session(self._engine) as session:
             return list(session.scalars(select(OrgRow.id)))
+
+    def clear(self) -> None:
+        with Session(self._engine) as session:
+            session.execute(delete(OrgRow))
+            session.commit()
 
 
 class InstanceRow(Base):
@@ -200,6 +211,11 @@ class SqlAlchemyInstanceStore:
     def list_ids(self) -> list[str]:
         with Session(self._engine) as session:
             return list(session.scalars(select(InstanceRow.id)))
+
+    def clear(self) -> None:
+        with Session(self._engine) as session:
+            session.execute(delete(InstanceRow))
+            session.commit()
 
 
 class AuditEventRow(Base):
@@ -290,6 +306,11 @@ class SqlAlchemyAuditLog:
                 .order_by(AuditEventRow.seq)
             )
             return [_event_from_row(row) for row in session.scalars(stmt)]
+
+    def clear(self) -> None:
+        with Session(self._engine) as session:
+            session.execute(delete(AuditEventRow))
+            session.commit()
 
 
 class UserRow(Base):

@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from procworks import adhoc, assignment, metrics, migration
+from procworks import adhoc, assignment, demo, metrics, migration
 from procworks import bpmn as bpmn_io
 from procworks import execution as exe
 from procworks import operations as ops
@@ -43,6 +43,7 @@ from procworks.auth import (
     create_auth_backend,
 )
 from procworks.auth_password import (
+    DEFAULT_ADMIN_LOGIN,
     PasswordAuthBackend,
     PasswordPolicyError,
     UserView,
@@ -277,6 +278,23 @@ class CreateUserResponse(BaseModel):
 class ResetPasswordResponse(BaseModel):
     login: str
     initial_password: str
+
+
+class ResetRequest(BaseModel):
+    load_demo: bool = Field(
+        default=False,
+        description="When true, reload the built-in demo data after wiping; "
+        "otherwise leave an empty system.",
+        examples=[True],
+    )
+
+
+class ResetResponse(BaseModel):
+    demo_loaded: bool
+    schemas: int
+    instances: int
+    org_models: int
+    users: int
 
 
 class CreateSchemaRequest(BaseModel):
@@ -765,6 +783,70 @@ def delete_user(login: str) -> Response:
     backend = _password_backend()
     backend.store.delete_user(login)
     return Response(status_code=204)
+
+
+def _wipe_users(keep_logins: set[str]) -> None:
+    """Delete every login except the ones in ``keep_logins`` (password mode).
+
+    The acting admin (and any explicitly kept admin) survive a reset so the
+    operator stays logged in and the system remains administrable. In open/token
+    mode there is no credential store, so there is nothing to wipe.
+    """
+
+    if not isinstance(_auth_backend, PasswordAuthBackend):
+        return
+    for user in _auth_backend.store.list_users():
+        if user.login not in keep_logins:
+            _auth_backend.store.delete_user(user.login)
+
+
+def _user_count() -> int:
+    if isinstance(_auth_backend, PasswordAuthBackend):
+        return len(_auth_backend.store.list_users())
+    return 0
+
+
+@app.post("/admin/reset", response_model=ResetResponse)
+def post_admin_reset(
+    req: ResetRequest, principal: Principal = Depends(require_role("admin")),
+) -> ResetResponse:
+    """Wipe all process data to zero, optionally reloading the demo (admin only).
+
+    This is a deliberately destructive maintenance action: every schema,
+    instance, audit event and shared org model is removed. In password mode all
+    logins are dropped too, except the acting admin and the bootstrap ``admin``
+    so nobody gets locked out. With ``load_demo`` the built-in demo world is
+    loaded afterwards (the same data that ships for a guided first look).
+    """
+
+    _store.clear()
+    _instances.clear()
+    _org_store.clear()
+    _audit.clear()
+
+    keep = {DEFAULT_ADMIN_LOGIN}
+    if principal.subject:
+        keep.add(principal.subject)
+    _wipe_users(keep)
+
+    if req.load_demo:
+        backend = _auth_backend if isinstance(_auth_backend, PasswordAuthBackend) else None
+        demo.load_demo(
+            schema_store=_store,
+            instance_store=_instances,
+            org_store=_org_store,
+            audit_log=_audit,
+            password_backend=backend,
+        )
+
+    return ResetResponse(
+        demo_loaded=req.load_demo,
+        schemas=len(_store.list_ids()),
+        instances=len(_instances.list_ids()),
+        org_models=len(_org_store.list_ids()),
+        users=_user_count(),
+    )
+
 
 
 @app.get("/schemas", dependencies=[_read])

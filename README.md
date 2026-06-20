@@ -24,6 +24,90 @@ Geschäftsprozessen (BPMN 2.0 als fachliche Basis). Leitidee sind **drei Säulen
 Das vollständige Architektur-Konzept liegt in
 [docs/Architektur-Konzept-Prozessmodellierung.md](docs/Architektur-Konzept-Prozessmodellierung.md).
 
+## Schnellstart: In 15 Minuten einsatzbereit
+
+> Für mittelständische Unternehmen **ohne eigene IT-Abteilung**. Sie brauchen
+> kein Vorwissen – nur einen Rechner mit Internet. ProcWorks startet als ein
+> einziger, in sich geschlossener Container-Verbund (Datenbank + Server +
+> Oberfläche); Sie installieren **eine** Voraussetzung und führen **einen**
+> Befehl aus.
+
+### Standardfall: Windows Server (nichts vorinstalliert)
+
+Auf einem frischen Windows Server sind genau **drei kostenlose Programme** nötig.
+Jedes wird per Mausklick installiert – die ausführliche, bebilderte
+Schritt-für-Schritt-Anleitung steht in
+[docs/Windows-Server-Setup.md](docs/Windows-Server-Setup.md).
+
+1. **WSL2 aktivieren** – einmalig in der PowerShell (als Administrator):
+   `wsl --install`, danach den Server neu starten.
+2. **Docker Desktop** installieren – von <https://www.docker.com/products/docker-desktop/>,
+   bei der Installation „Use WSL 2" aktiviert lassen und einmal starten, bis
+   „Engine running" erscheint. *(Docker ist die Verpackung, in der ProcWorks
+   ausgeliefert wird – damit entfällt jede manuelle Einrichtung von Datenbank
+   und Server.)*
+3. **Git** installieren – von <https://git-scm.com/download/win> (Standardoptionen
+   genügen).
+
+Danach in der PowerShell **diese vier Zeilen** ausführen (holt ProcWorks und
+startet alles):
+
+```powershell
+cd C:\
+git clone https://github.com/tobiasHaecker/procworks.git ProcWorks
+cd C:\ProcWorks
+docker compose -f deploy/docker-compose.full.yml up --build -d
+```
+
+Fertig. Im Browser `http://localhost` öffnen – es erscheint das Login. Das
+Start-Passwort des Administrators steht im Server-Log
+(`docker compose -f deploy/docker-compose.full.yml logs api`) oder wird vorab in
+der Compose-Datei gesetzt (siehe Windows-Anleitung, Abschnitt 5).
+
+### macOS / Linux (zum Ausprobieren)
+
+Voraussetzung ist nur **Docker** (Docker Desktop auf macOS, Docker Engine unter
+Linux). Dann:
+
+```bash
+git clone https://github.com/tobiasHaecker/procworks.git
+cd procworks
+docker compose -f deploy/docker-compose.full.yml up --build -d
+# Oberfläche: http://localhost   ·   Admin-Startpasswort aus dem Log:
+docker compose -f deploy/docker-compose.full.yml logs api | grep -i passwort
+```
+
+### Sofort ausprobieren: Beispieldaten laden
+
+Damit alle Funktionen **sofort greifbar** sind, bringt ProcWorks fertige
+Beispieldaten mit (eine Organisation „Acme", zwei Prozesse und drei laufende
+Instanzen). So laden Sie sie:
+
+1. Als **Administrator** anmelden.
+2. In die Sicht **Monitoring** wechseln, ganz unten zum Bereich
+   **„Wartung (Administrator)"** scrollen.
+3. **„Beispieldaten laden"** klicken und bestätigen.
+
+Derselbe Bereich enthält **„Auf Null zurücksetzen"**, um jederzeit wieder mit
+einem leeren System zu starten. Beides ist **nur für Administratoren** sichtbar.
+
+Nach dem Laden können Sie sich mit den **Testbenutzern** anmelden (Passwort für
+alle: `demo-procworks`):
+
+| Login | Person | Rolle | Sieht / kann |
+| --- | --- | --- | --- |
+| `mara.modell` | Mara Modell | Modellierer | Prozesse modellieren, Daten/Organisation pflegen |
+| `erika.sander` | Erika Sander | Bearbeiter | Aufgaben erledigen (hat offene Urlaubsanträge) |
+| `tom.berger` | Tom Berger | Bearbeiter (Leitung) | Genehmigungen erteilen |
+| `vera.viewer` | Vera Viewer | Leser | Monitoring nur ansehen |
+
+> Die Testbenutzer existieren erst **nach** dem Laden der Beispieldaten und nur
+> im Login-Betrieb (Standard im mitgelieferten Stack). Bitte vor dem
+> Produktivbetrieb über **„Auf Null zurücksetzen"** entfernen.
+
+Eine Kurzanleitung speziell für Mitarbeiter (Anmelden + Aufgaben bearbeiten)
+liegt in [docs/Mitarbeiter-Anleitung.md](docs/Mitarbeiter-Anleitung.md).
+
 ## Correctness by Construction (Kernprinzip)
 
 Es gilt durchgängig eine **Korrektheitsinvariante I**: Jeder Bearbeitungsschritt
@@ -80,9 +164,10 @@ Kompositionsregeln H1-H4/F1-F4.
 - **Schema-Evolution + Instanzmigration (M1–M5)**: `new_revision` erzeugt eine ID-erhaltende Revision; `check_migration`/`migrate_instance` ziehen laufende Instanzen um, wenn die ausgeführte Region erhalten bleibt (M1 Ziel korrekt+RELEASED, M2 Region unverändert, M3 saubere Markierungsabbildung, M4 Pflichtdaten verfügbar, M5 ad-hoc Instanzen blockiert).
 - **BPMN-Import/Export** (`bpmn.py`): Schemata werden als semantisches BPMN 2.0 exportiert (Events/`task`/`callActivity`/`parallelGateway`/`exclusiveGateway`, Bedingungen als `conditionExpression`) und auf der geprüften Block-Teilsprache zurückgelesen. Der Import validiert **vor** dem Speichern (No-Bypass): fehlerhaftes XML oder Konstrukte außerhalb der Teilsprache liefern `BpmnError`, nicht block-strukturierte Graphen werden über K1-K3 abgelehnt; der Split-/Join-Typ wird über den Knotengrad erschlossen (semantisches BPMN, kein Diagramm-Layout).
 - **Monitoring/Audit + Process Mining** (`audit.py`): jede Laufzeitoperation wird **an der API-Grenze** in ein append-only Event-Log geschrieben (der Ausführungskern bleibt rein). Aus der Historie liefert die API eine **Audit-Timeline** je Instanz (`GET /instances/{id}/audit`), **KPIs** (`GET /monitoring/kpis`: laufend/abgeschlossen, Ø Durchlaufzeit, je Aktivität Abschlüsse + Ø Dauer als Engpass-Signal) und eine entdeckte **Prozesskarte** (`GET /monitoring/process-map`, Directly-follows-Graph als leichtes Process Mining). Der Web-Client zeigt das in der Monitoring-Sicht (KPI-Kacheln, Engpass-Tabelle, Prozesskarte, Audit-Verlauf je Instanz).
+- **Beispieldaten & Reset (nur Administrator)**: ein eingebauter Demo-Datensatz (`demo.py`) macht alle Funktionen sofort greifbar — eine geteilte Organisation, ein **freigegebener** Prozess „Urlaubsantrag" und ein **Entwurf** „Beschaffung", dazu **drei Instanzen** an unterschiedlichen Punkten (eine frisch gestartet, eine in der Genehmigung, eine abgeschlossen) inklusive Audit-Verlauf und KPIs. Über `POST /admin/reset` setzt **ausschließlich** die Rolle `admin` das System **auf Null** zurück (Schemata, Instanzen, Organisationsmodelle, im Login-Betrieb auch alle Nutzer) und lädt die Beispieldaten optional wieder (`{"load_demo": true}`). Die handelnde Administrator-Identität und das Bootstrap-Konto `admin` bleiben dabei erhalten (kein Aussperren). Im Web-Client steht das als Bereich **„Wartung (Administrator)"** in der Monitoring-Sicht; die Testbenutzer-Logins sind im Schnellstart dokumentiert.
 - **Modellanalyse, Priorität & Zeit (additiv, konzeptgetrieben)**: lesende **Modellmetriken & 7PMG-Hinweise** (`metrics.py`, `GET /schemas/{id}/metrics`: Größe, Verschachtelungstiefe, Gateway-Heterogenität, Konnektorgrad — nicht-blockierend, ohne Einfluss auf die Korrektheit), optionale **Wertschöpfungs-Klassifikation** je Knoten (`set_value_class`), **Arbeitslisten-Priorität** = Auswirkung + Dringlichkeit mit Sortierung der offenen Aufgaben (`set_node_priority`, `OpenTask.priority`) und eine statische **Zeitperspektive T1/T2** (Dauer-/Fristfelder; der kritische Pfad muss die Frist einhalten — als eigene, nur bei vorhandenen Zeitangaben greifende Validierungsgruppe, `set_time_constraint`/`set_deadline`). Die KPI-Auswertung trägt zusätzlich eine **Flexibilitäts-Kennzahl** (Ad-hoc-Anteil); Kosten/Qualität bleiben bewusst offen.
 - **Deployment** (`core/Dockerfile`, `web/Dockerfile`, [deploy/](deploy/)): zustandsloses API-Container-Image (Migrationen beim Start, dann Uvicorn, non-root) plus Web/SPA hinter **Caddy** als Reverse Proxy mit automatischem TLS (Let's Encrypt), das `/api/*` an die API routet. Voller lokaler Stack via [deploy/docker-compose.full.yml](deploy/docker-compose.full.yml) (PostgreSQL + API + Web), Produktion via **Helm-Chart** ([deploy/helm/](deploy/helm/)). Der gebündelte Produktions-Stack (Compose/Helm) aktiviert standardmäßig das **Passwort-Login** (`PROCWORKS_AUTH=password`); beim ersten Start eines leeren Stores wird automatisch ein `admin`-Konto mit zufälligem Einmal-Passwort angelegt und ins API-Log geschrieben (erzwungener Wechsel beim ersten Login). **CI/CD**: GitHub Actions baut beide Images, scannt sie mit **Trivy** und veröffentlicht sie bei einem Versions-Tag nach **ghcr.io**. Erstinstallation auf einem Windows Server: [docs/Windows-Server-Setup.md](docs/Windows-Server-Setup.md). Anleitung für Mitarbeiter (Anmelden + Aufgaben bearbeiten): [docs/Mitarbeiter-Anleitung.md](docs/Mitarbeiter-Anleitung.md).
-- 344 Tests (pytest), `ruff` + `mypy --strict` grün.
+- 354 Tests (pytest), `ruff` + `mypy --strict` grün.
 
 ```powershell
 cd core

@@ -250,6 +250,30 @@ Es erscheint direkt das **Login-Fenster**.
 > erfolgreichen Inbetriebnahme aus `PROCWORKS_ADMIN_PASSWORD` entfernt werden
 > (der Bootstrap ist idempotent und legt den vorhandenen Admin nicht erneut an).
 
+### 8.1 Optional: Beispieldaten zum Ausprobieren laden
+
+Damit alle Funktionen sofort sichtbar werden, kann der Administrator fertige
+Beispieldaten laden (eine Organisation, zwei Prozesse, drei laufende Instanzen):
+
+1. Als **Administrator** anmelden.
+2. In die Sicht **Monitoring** wechseln und ganz nach unten zum Bereich
+   **„Wartung (Administrator)"** scrollen.
+3. **„Beispieldaten laden"** klicken und bestätigen.
+
+Anschließend stehen vier **Testbenutzer** zum Anmelden bereit (Passwort für alle:
+`demo-procworks`):
+
+| Login | Rolle |
+| --- | --- |
+| `mara.modell` | Modellierer |
+| `erika.sander` | Bearbeiter (hat offene Aufgaben) |
+| `tom.berger` | Bearbeiter / Leitung (genehmigt) |
+| `vera.viewer` | Leser (nur Monitoring) |
+
+Über **„Auf Null zurücksetzen"** im selben Bereich werden alle Daten **und** die
+Testbenutzer wieder entfernt. **Vor dem Produktivbetrieb** unbedingt
+zurücksetzen, damit keine Demo-Logins bestehen bleiben.
+
 ---
 
 ## 9. Betrieb

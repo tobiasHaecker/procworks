@@ -9,6 +9,33 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Beispieldaten & administrativer Reset**: Ein eingebauter Demo-Datensatz
+  (`procworks/demo.py`) macht alle Funktionen sofort greifbar – die geteilte
+  Organisation `org-acme`, der **freigegebene** Prozess „Urlaubsantrag“, der
+  **Entwurf** „Beschaffung“ und **drei Instanzen** an unterschiedlichen Punkten
+  (frisch gestartet, in Genehmigung wartend, abgeschlossen) inklusive
+  Audit-Verlauf und KPIs.
+  - Neuer **administrator-exklusiver** Endpunkt `POST /admin/reset`
+    (`require_role("admin")`, sonst HTTP 403): setzt das System **auf Null**
+    (Schemata, Instanzen, Organisationsmodelle, Audit-Log) und lädt die
+    Beispieldaten optional wieder (`{"load_demo": true}`). Im Passwort-Login
+    werden zusätzlich alle Nutzerkonten entfernt – **außer** dem Bootstrap-`admin`
+    und der handelnden Administrator-Identität (kein Aussperren). Die Antwort
+    liefert die neuen Bestände (`schemas`, `instances`, `org_models`, `users`).
+  - Alle Stores erhielten dafür ein additives `clear()`
+    (`SchemaStore`/`InstanceStore`/`OrgStore`/`AuditLog`, jeweils in-memory und
+    SQLAlchemy).
+  - Der Web-Client zeigt das als Bereich **„Wartung (Administrator)“** in der
+    Monitoring-Sicht (zwei Aktionen mit Bestätigungsdialog), nur für die Rolle
+    `admin` sichtbar.
+  - **Test-Logins** für die Beispieldaten (Passwort `demo-procworks`):
+    `mara.modell` (Modellierer), `erika.sander` (Bearbeiter), `tom.berger`
+    (Bearbeiter/Leitung), `vera.viewer` (Leser). Sie entstehen beim Laden der
+    Beispieldaten im Passwort-Login und sind im README-Schnellstart sowie der
+    Windows-Server-Anleitung dokumentiert.
+  - Der README bekam einen **Schnellstart „In 15 Minuten einsatzbereit“**
+    (Windows Server als Standard, dazu macOS/Linux) für mittelständische
+    Unternehmen ohne eigene IT-Abteilung.
 - **RBAC-Verfeinerung & Test-Instanzen für Entwürfe**: Der `Modellierer`
   (`modeler`) ist jetzt zugleich betroffener Mitarbeiter – er darf Aufgaben über
   „Meine Aufgaben“ bearbeiten, Instanzen ausführen und **eigene Entwürfe als

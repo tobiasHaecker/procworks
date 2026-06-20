@@ -1396,6 +1396,21 @@ async function viewMonitor() {
       ? table(["Von", "Nach", "H\u00E4ufigkeit"], edgeRows)
       : emptyState("Noch keine Abl\u00E4ufe entdeckt. Schlie\u00DFe Aktivit\u00E4ten ab."))));
 
+  // Wartung: nur Administratoren d\u00FCrfen die Daten zur\u00FCcksetzen oder die
+  // Beispieldaten laden. Beides l\u00E4uft \u00FCber POST /admin/reset.
+  if (hasRole("admin")) {
+    content.appendChild(el("div", { class: "panel" },
+      el("div", { class: "panel-h" },
+        el("h2", null, "Wartung (Administrator)"),
+        el("span", { class: "sub" }, "Daten zur\u00FCcksetzen \u00B7 Beispiel laden")),
+      el("div", { class: "panel-b" },
+        el("p", { class: "muted" },
+          "Setzt das gesamte System zur\u00FCck. Die Beispieldaten zeigen alle Funktionen anhand zweier Prozesse, einer Organisation und drei laufenden Instanzen. Dieser Vorgang l\u00F6scht alle vorhandenen Daten unwiderruflich."),
+        el("div", { style: "display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;" },
+          el("button", { class: "btn primary", onClick: () => confirmReset(true) }, "Beispieldaten laden"),
+          el("button", { class: "btn danger", onClick: () => confirmReset(false) }, "Auf Null zur\u00FCcksetzen")))));
+  }
+
   if (state.instance) {
     const detail = el("div");
     // Schema der Instanz laden, damit der Graph passt
@@ -1416,6 +1431,38 @@ async function openInstanceFromMonitor(id) {
       renderSchemaPicker();
     }
     render();
+  } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
+}
+
+// Administrator-Wartung: System zur\u00FCcksetzen bzw. Beispieldaten laden.
+function confirmReset(loadDemo) {
+  const msg = loadDemo
+    ? "Alle vorhandenen Daten werden gel\u00F6scht und durch die Beispieldaten ersetzt. M\u00F6chten Sie fortfahren?"
+    : "Alle Schemata, Instanzen und Organisationsmodelle werden gel\u00F6scht. Im Login-Betrieb werden zus\u00E4tzlich alle Nutzer au\u00DFer Ihnen und dem Administrator-Konto entfernt. Dieser Schritt kann nicht r\u00FCckg\u00E4ngig gemacht werden.";
+  openModal(
+    loadDemo ? "Beispieldaten laden" : "Auf Null zur\u00FCcksetzen",
+    el("p", { class: "muted" }, msg),
+    async () => { await runReset(loadDemo); return true; },
+    loadDemo ? "Beispieldaten laden" : "Endg\u00FCltig l\u00F6schen");
+}
+
+async function runReset(loadDemo) {
+  try {
+    const res = await api.post("/admin/reset", { load_demo: !!loadDemo });
+    const lines = [
+      `Schemata: ${res.schemas}`,
+      `Instanzen: ${res.instances}`,
+      `Organisationsmodelle: ${res.org_models}`,
+    ];
+    if (state.passwordLogin) lines.push(`Nutzerkonten: ${res.users}`);
+    toast("ok",
+      loadDemo ? "Beispieldaten geladen" : "System auf Null zur\u00FCckgesetzt",
+      lines);
+    // Auswahl zur\u00FCcksetzen, da bisherige Schemata/Instanzen evtl. weg sind.
+    state.instance = null;
+    state.schema = null;
+    state.schemaId = null;
+    await boot();
   } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
 }
 

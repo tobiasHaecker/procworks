@@ -521,6 +521,44 @@ ein. Ohne `DATABASE_URL` liegt das Log in-memory; mit `DATABASE_URL` wird jedes
 Event durabel in die Tabelle `audit_event` geschrieben (`SqlAlchemyAuditLog`,
 monotone `seq` per Datenbank) und überlebt einen Neustart.
 
+### Beispieldaten & Reset (Administrator)
+
+`demo.py` enthält einen reproduzierbaren Demo-Datensatz, der alle Funktionen
+greifbar macht: eine geteilte Organisation `org-acme` (Rollen, Abteilungen,
+Agenten mit Vertreter), den **freigegebenen** Prozess `urlaubsantrag`
+(START → erfassen → prüfen → XOR Genehmigung/Ablehnung → benachrichtigen, mit
+Datenelement `tage`) und den **Entwurf** `beschaffung` (AND-Split, Datenelement
+`betrag`), dazu **drei Instanzen** an unterschiedlichen Punkten:
+
+```text
+urlaub-2026-001  RUNNING    frisch gestartet (erste Aktivität offen)
+urlaub-2026-002  RUNNING    erfasst + geprüft, wartet auf Genehmigung der Leitung
+urlaub-2026-003  COMPLETED  abgelehnt + benachrichtigt (Ende erreicht)
+```
+
+`load_demo(*, schema_store, instance_store, org_store, audit_log, password_backend=None)`
+befüllt die Stores idempotent und erzeugt dabei echte Audit-Events (die Instanzen
+tauchen also in KPIs und Prozesskarte auf). Mit `password_backend` werden
+zusätzlich die Test-Logins angelegt (`mara.modell`, `erika.sander`, `tom.berger`,
+`vera.viewer`; Passwort `demo-procworks`, ohne erzwungene Änderung).
+
+Der Reset ist **administrator-exklusiv** und läuft über die API:
+
+```text
+POST /admin/reset   {"load_demo": false}  -> alles auf Null
+POST /admin/reset   {"load_demo": true}   -> alles auf Null, danach Beispieldaten
+   -> { demo_loaded, schemas, instances, org_models, users }
+```
+
+`require_role("admin")` schützt den Endpunkt; ein Nicht-Admin erhält HTTP 403.
+Geleert werden Schemata, Instanzen, Organisationsmodelle und das Audit-Log (alle
+Stores haben dafür ein additives `clear()`). Im Passwort-Login werden zusätzlich
+alle Nutzerkonten entfernt – **außer** dem Bootstrap-`admin` und der gerade
+handelnden Administrator-Identität, damit sich niemand aussperrt. Der Web-Client
+bietet das als Bereich **„Wartung (Administrator)"** in der Monitoring-Sicht
+(zwei Aktionen mit Bestätigungsdialog), nur für die Rolle `admin` sichtbar.
+
+
 ## Persistenz (PostgreSQL)
 
 Ohne `DATABASE_URL` arbeitet der Kern mit einem flüchtigen In-Memory-Store

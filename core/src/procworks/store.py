@@ -24,6 +24,8 @@ class SchemaStore(Protocol):
 
     def list_ids(self) -> list[str]: ...
 
+    def clear(self) -> None: ...
+
 
 def make_resolver(
     store: SchemaStore,
@@ -64,6 +66,9 @@ class InMemorySchemaStore:
     def list_ids(self) -> list[str]:
         return list(self._schemas.keys())
 
+    def clear(self) -> None:
+        self._schemas.clear()
+
 
 def create_store() -> SchemaStore:
     """Build the store from the environment.
@@ -91,6 +96,8 @@ class InstanceStore(Protocol):
 
     def list_ids(self) -> list[str]: ...
 
+    def clear(self) -> None: ...
+
 
 class InMemoryInstanceStore:
     """A trivial dict-backed store of running instances keyed by id.
@@ -112,6 +119,9 @@ class InMemoryInstanceStore:
 
     def list_ids(self) -> list[str]:
         return list(self._instances.keys())
+
+    def clear(self) -> None:
+        self._instances.clear()
 
 
 def create_instance_store() -> InstanceStore:
@@ -139,6 +149,8 @@ class OrgStore(Protocol):
 
     def list_ids(self) -> list[str]: ...
 
+    def clear(self) -> None: ...
+
 
 class InMemoryOrgStore:
     """A trivial dict-backed store of shared org models keyed by id."""
@@ -157,6 +169,9 @@ class InMemoryOrgStore:
 
     def list_ids(self) -> list[str]:
         return list(self._orgs.keys())
+
+    def clear(self) -> None:
+        self._orgs.clear()
 
 
 def create_org_store() -> OrgStore:
