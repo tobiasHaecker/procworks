@@ -44,6 +44,9 @@ from procworks.model import (
     StaffRule,
     SubProcessBinding,
     TemplateParameter,
+    TimeConstraint,
+    ValueClass,
+    WorkItemPriority,
 )
 from procworks.validator import (
     CorrectnessError,
@@ -1131,4 +1134,119 @@ def unlink_follow_up(schema: ProcessSchema, link_id: str) -> ProcessSchema:
             [ValidationFinding(rule="OP", message=f"follow-up link '{link_id}' does not exist")]
         )
     candidate.follow_up_links = remaining
+    return raise_if_invalid(candidate)
+
+
+# --- analytical annotations (value class, priority, time; E3/E8/E5) -------
+
+
+def set_value_class(
+    schema: ProcessSchema, node_id: str, value_class: ValueClass | None
+) -> ProcessSchema:
+    """Annotate the value-adding classification of an activity (roadmap E3).
+
+    requires: schema editable (R0); node exists and is an ACTIVITY or
+              SUBPROCESS (only performing steps carry value).
+    ensures:  the node's ``value_class`` is set (or cleared with ``None``); the
+              schema stays correct -- the annotation has no structural weight.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type not in (NodeType.ACTIVITY, NodeType.SUBPROCESS):
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="only ACTIVITY or SUBPROCESS nodes carry a value class",
+                )
+            ]
+        )
+    node.value_class = value_class
+    return raise_if_invalid(candidate)
+
+
+def set_node_priority(
+    schema: ProcessSchema,
+    node_id: str,
+    priority: WorkItemPriority | None,
+) -> ProcessSchema:
+    """Set (or clear) the work-item priority of an interactive node (E8).
+
+    requires: schema editable (R0); node exists and is an ACTIVITY or
+              SUBPROCESS (the steps that produce work items).
+    ensures:  ``node_priorities[node_id]`` is set or removed; structure is
+              unaffected, so the schema stays correct.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type not in (NodeType.ACTIVITY, NodeType.SUBPROCESS):
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="only ACTIVITY or SUBPROCESS nodes carry a priority",
+                )
+            ]
+        )
+    if priority is None:
+        candidate.node_priorities.pop(node_id, None)
+    else:
+        candidate.node_priorities[node_id] = priority
+    return raise_if_invalid(candidate)
+
+
+def set_time_constraint(
+    schema: ProcessSchema,
+    node_id: str,
+    constraint: TimeConstraint | None,
+) -> ProcessSchema:
+    """Set (or clear) the temporal annotation of a node (roadmap E5).
+
+    requires: schema editable (R0); node exists and is an ACTIVITY or
+              SUBPROCESS (only performing steps consume time here).
+    ensures:  ``time_constraints[node_id]`` is set or removed; the temporal
+              rules T1/T2 are re-checked, so an inconsistent annotation (e.g. a
+              negative duration or a critical path beyond the deadline) is
+              rejected (Correctness by Construction extends to time).
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type not in (NodeType.ACTIVITY, NodeType.SUBPROCESS):
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="only ACTIVITY or SUBPROCESS nodes carry a time constraint",
+                )
+            ]
+        )
+    if constraint is None:
+        candidate.time_constraints.pop(node_id, None)
+    else:
+        candidate.time_constraints[node_id] = constraint
+    return raise_if_invalid(candidate)
+
+
+def set_deadline(
+    schema: ProcessSchema, deadline_seconds: float | None
+) -> ProcessSchema:
+    """Set (or clear) the hard deadline of the whole process (roadmap E5).
+
+    requires: schema editable (R0).
+    ensures:  ``deadline_seconds`` is set or cleared; T1/T2 are re-checked so a
+              negative deadline or an over-long critical path is rejected.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    candidate.deadline_seconds = deadline_seconds
     return raise_if_invalid(candidate)

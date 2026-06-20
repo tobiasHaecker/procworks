@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from procworks import adhoc, assignment, migration
+from procworks import adhoc, assignment, metrics, migration
 from procworks import bpmn as bpmn_io
 from procworks import execution as exe
 from procworks import operations as ops
@@ -50,6 +50,7 @@ from procworks.auth_password import (
 )
 from procworks.bpmn import BpmnError
 from procworks.execution import ExecutionError
+from procworks.metrics import ModelReport
 from procworks.model import (
     AccessMode,
     ConnectorKind,
@@ -57,12 +58,16 @@ from procworks.model import (
     ExecutorKind,
     FollowUpMode,
     FollowUpTrigger,
+    ImpactUrgency,
     InstanceState,
     OrgModel,
     ProcessInstance,
     ProcessSchema,
     StaffRule,
     TemplateParameter,
+    TimeConstraint,
+    ValueClass,
+    WorkItemPriority,
 )
 from procworks.store import (
     create_instance_store,
@@ -397,6 +402,36 @@ class AddActivityTemplateRequest(BaseModel):
 class AssignStaffRuleRequest(BaseModel):
     node_id: str = Field(..., examples=["act_1"])
     rule: StaffRule
+
+
+class SetValueClassRequest(BaseModel):
+    node_id: str = Field(..., examples=["act_1"])
+    value_class: ValueClass | None = Field(
+        default=None, examples=[ValueClass.VALUE_ADDING]
+    )
+
+
+class SetPriorityRequest(BaseModel):
+    node_id: str = Field(..., examples=["act_1"])
+    #: When ``None`` the priority annotation is cleared.
+    priority: WorkItemPriority | None = Field(
+        default=None,
+        examples=[
+            WorkItemPriority(impact=ImpactUrgency.HIGH, urgency=ImpactUrgency.HIGH)
+        ],
+    )
+
+
+class SetTimeConstraintRequest(BaseModel):
+    node_id: str = Field(..., examples=["act_1"])
+    #: When ``None`` the temporal annotation is cleared.
+    constraint: TimeConstraint | None = Field(
+        default=None, examples=[TimeConstraint(max_duration_seconds=3600)]
+    )
+
+
+class SetDeadlineRequest(BaseModel):
+    deadline_seconds: float | None = Field(default=None, examples=[86400])
 
 
 class InsertSubprocessRequest(BaseModel):
@@ -755,6 +790,21 @@ def get_validation(schema_id: str) -> ValidationReport:
     schema = _get_or_404(schema_id)
     findings = validate(schema, _resolver)
     return ValidationReport(correct=not findings, findings=findings)
+
+
+@app.get(
+    "/schemas/{schema_id}/metrics",
+    response_model=ModelReport,
+    dependencies=[_read],
+)
+def get_metrics(schema_id: str) -> ModelReport:
+    """Read-only model metrics, 7PMG hints and value-class mix (roadmap E7/E3).
+
+    These figures are advisory only and never affect Stufe-A/B correctness.
+    """
+
+    schema = _get_or_404(schema_id)
+    return metrics.model_report(schema)
 
 
 @app.post(
@@ -1160,6 +1210,54 @@ def post_assign_service(schema_id: str, req: AssignServiceRequest) -> ProcessSch
 def post_assign_staff_rule(schema_id: str, req: AssignStaffRuleRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
     return _commit_or_422(lambda: ops.assign_staff_rule(schema, req.node_id, req.rule))
+
+
+@app.post(
+    "/schemas/{schema_id}/value-class",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_set_value_class(schema_id: str, req: SetValueClassRequest) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(
+        lambda: ops.set_value_class(schema, req.node_id, req.value_class)
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/priority",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_set_priority(schema_id: str, req: SetPriorityRequest) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(
+        lambda: ops.set_node_priority(schema, req.node_id, req.priority)
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/time-constraint",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_set_time_constraint(
+    schema_id: str, req: SetTimeConstraintRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(
+        lambda: ops.set_time_constraint(schema, req.node_id, req.constraint)
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/deadline",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_set_deadline(schema_id: str, req: SetDeadlineRequest) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(lambda: ops.set_deadline(schema, req.deadline_seconds))
 
 
 @app.post("/schemas/{schema_id}/subprocess", response_model=ProcessSchema, dependencies=[_model])

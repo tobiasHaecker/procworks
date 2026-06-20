@@ -26,15 +26,21 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from procworks.model import (
+    PRIORITY_RANK,
     InstanceState,
     NodeState,
     NodeType,
     OrgModel,
+    PriorityLevel,
     ProcessInstance,
     ProcessSchema,
     StaffRule,
     StaffRuleKind,
+    WorkItemPriority,
 )
+
+#: Default work-item priority when a node carries no explicit annotation.
+_DEFAULT_PRIORITY = WorkItemPriority()
 
 
 class OpenTask(BaseModel):
@@ -45,6 +51,8 @@ class OpenTask(BaseModel):
     node_id: str
     label: str
     eligible_agents: list[str]
+    #: Derived work-item priority level (roadmap E8). ``MEDIUM`` by default.
+    priority: PriorityLevel = PriorityLevel.MEDIUM
 
 
 def eligible_agents(
@@ -69,7 +77,9 @@ def open_tasks(schema: ProcessSchema, instance: ProcessInstance) -> list[OpenTas
     """List the open human tasks of a running instance with their eligibles.
 
     An open human task is an ACTIVATED/RUNNING ACTIVITY that carries a staff
-    rule. Automatic or unassigned activities are not part of a worklist.
+    rule. Automatic or unassigned activities are not part of a worklist. The
+    list is ordered by derived priority (most urgent first, roadmap E8) and
+    then by label for a stable, predictable ordering.
     """
 
     tasks: list[OpenTask] = []
@@ -83,6 +93,7 @@ def open_tasks(schema: ProcessSchema, instance: ProcessInstance) -> list[OpenTas
             continue
         if node_id not in schema.staff_rules:
             continue
+        priority = schema.node_priorities.get(node_id, _DEFAULT_PRIORITY)
         tasks.append(
             OpenTask(
                 instance_id=instance.id,
@@ -90,8 +101,10 @@ def open_tasks(schema: ProcessSchema, instance: ProcessInstance) -> list[OpenTas
                 node_id=node_id,
                 label=node.label or node_id,
                 eligible_agents=sorted(eligible_agents(schema, node_id, instance)),
+                priority=priority.level,
             )
         )
+    tasks.sort(key=lambda t: (-PRIORITY_RANK[t.priority], t.label, t.node_id))
     return tasks
 
 

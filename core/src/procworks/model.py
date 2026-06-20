@@ -44,6 +44,19 @@ class EdgeType(StrEnum):
     CONTROL = "CONTROL"
 
 
+class ValueClass(StrEnum):
+    """Value-adding classification of an activity (Section 8.4.1, roadmap E3).
+
+    A purely analytical, optional annotation used by the monitoring/leistungs
+    sicht to highlight the share of non-value-adding steps. It carries no
+    correctness weight (Stufe A/B unaffected).
+    """
+
+    VALUE_ADDING = "VALUE_ADDING"
+    BUSINESS_NECESSARY = "BUSINESS_NECESSARY"
+    NON_VALUE_ADDING = "NON_VALUE_ADDING"
+
+
 class LifecycleState(StrEnum):
     """Schema lifecycle states (Section 4.1)."""
 
@@ -149,6 +162,9 @@ class Node(BaseModel):
     id: str
     type: NodeType
     label: str = ""
+    #: Optional value-adding classification (Section 8.4.1, roadmap E3). Only
+    #: meaningful for ACTIVITY/SUBPROCESS nodes; ``None`` means unclassified.
+    value_class: ValueClass | None = None
 
 
 class DataElement(BaseModel):
@@ -283,6 +299,92 @@ class StaffRule(BaseModel):
     ref: str | None = None
     recursive: bool = False
     operands: list[StaffRule] = Field(default_factory=list)
+
+
+# --- work-item priority (Section 3.8 / 6.2.1, roadmap E8) -----------------
+
+
+class PriorityLevel(StrEnum):
+    """A ranked priority level of a work item (ascending severity)."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+#: Numeric rank of each priority level (higher = more urgent), used to sort a
+#: worklist. Kept separate from the enum so the ordering is explicit.
+PRIORITY_RANK: dict[PriorityLevel, int] = {
+    PriorityLevel.LOW: 0,
+    PriorityLevel.MEDIUM: 1,
+    PriorityLevel.HIGH: 2,
+    PriorityLevel.CRITICAL: 3,
+}
+
+
+class ImpactUrgency(StrEnum):
+    """A three-step impact or urgency scale (ITIL-style, Section 3.8)."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+#: Maps (impact, urgency) to a derived priority level, the classic
+#: ``Priorit\u00e4t = Auswirkung + Dringlichkeit`` matrix (Section 3.8). The score is
+#: the sum of the two 0..2 scales (0..4) bucketed into the four levels.
+_IMPACT_URGENCY_SCORE: dict[ImpactUrgency, int] = {
+    ImpactUrgency.LOW: 0,
+    ImpactUrgency.MEDIUM: 1,
+    ImpactUrgency.HIGH: 2,
+}
+
+
+class WorkItemPriority(BaseModel):
+    """The modelled priority of an interactive step (roadmap E8).
+
+    The effective :class:`PriorityLevel` is *derived* from impact and urgency
+    (``Priorit\u00e4t = Auswirkung + Dringlichkeit``) so the two business inputs stay
+    the single source of truth; the level is never stored independently.
+    """
+
+    impact: ImpactUrgency = ImpactUrgency.MEDIUM
+    urgency: ImpactUrgency = ImpactUrgency.MEDIUM
+
+    @property
+    def level(self) -> PriorityLevel:
+        """Derive the ranked priority from impact and urgency."""
+
+        score = _IMPACT_URGENCY_SCORE[self.impact] + _IMPACT_URGENCY_SCORE[self.urgency]
+        if score >= 4:
+            return PriorityLevel.CRITICAL
+        if score == 3:
+            return PriorityLevel.HIGH
+        if score >= 1:
+            return PriorityLevel.MEDIUM
+        return PriorityLevel.LOW
+
+    @property
+    def rank(self) -> int:
+        """Numeric rank of the derived level (higher = more urgent)."""
+
+        return PRIORITY_RANK[self.level]
+
+
+# --- temporal perspective (Section 3.8, T1-T3, roadmap E5) ----------------
+
+
+class TimeConstraint(BaseModel):
+    """An optional temporal annotation of a node (roadmap E5).
+
+    ``max_duration_seconds`` is the maximum expected processing duration of the
+    step; the schema-level ``deadline_seconds`` (see :class:`ProcessSchema`)
+    bounds the whole process. Both feed the static time-consistency rules
+    T1 (well-formed) and T2 (the critical path must fit the deadline).
+    """
+
+    max_duration_seconds: float | None = None
 
 
 # --- activity repository (templates, A1-A3) -------------------------------
@@ -431,6 +533,14 @@ class ProcessSchema(BaseModel):
     activity_templates: dict[str, ActivityTemplate] = Field(default_factory=dict)
     sub_process_bindings: dict[str, SubProcessBinding] = Field(default_factory=dict)
     follow_up_links: list[FollowUpLink] = Field(default_factory=list)
+    #: Optional work-item priorities per interactive node (roadmap E8). Absent
+    #: entries default to ``MEDIUM/MEDIUM`` when a worklist is rendered.
+    node_priorities: dict[str, WorkItemPriority] = Field(default_factory=dict)
+    #: Optional per-node temporal annotations (roadmap E5). Empty by default so
+    #: the temporal rules T1/T2 stay silent for models without time data.
+    time_constraints: dict[str, TimeConstraint] = Field(default_factory=dict)
+    #: Optional hard deadline of the whole process in seconds (roadmap E5).
+    deadline_seconds: float | None = None
 
     # --- read helpers -----------------------------------------------------
 

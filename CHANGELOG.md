@@ -9,6 +9,32 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- Konzeptgetriebene, **additive** Tool-Erweiterungen aus der Roadmap §13.1
+  umgesetzt – ohne ein bestehendes Korrektheitskriterium zu lockern und mit
+  eigenen Tests (Kern weiterhin vollständig grün, 338 Tests):
+  - **E7 – Modellmetriken & 7PMG-Hinweise** (`procworks/metrics.py`): rein
+    lesende Kennzahlen (Knotenzahl, Verschachtelungstiefe, Gateway-Heterogenität,
+    Konnektorgrad) und nicht-blockierende Hinweise (G1/G2/G6/G7). Endpunkt
+    `GET /schemas/{id}/metrics`. Beeinflusst Stufe A/B nicht.
+  - **E3 – Wertschöpfungs-Klassifikation** (`ValueClass`, optionales
+    `Node.value_class`): Operation `set_value_class`, Aggregation
+    `value_class_breakdown`, Endpunkt `POST /schemas/{id}/value-class`.
+  - **E8 – Arbeitslisten-Priorität** (`WorkItemPriority`, `ImpactUrgency`,
+    `PriorityLevel`): abgeleitete Priorität = Auswirkung + Dringlichkeit,
+    Sortierung der offenen Aufgaben (`OpenTask.priority`), Operation
+    `set_node_priority`, Endpunkt `POST /schemas/{id}/priority`.
+  - **E5 (statisch) – Zeitliche Perspektive T1/T2** (`TimeConstraint`,
+    `ProcessSchema.deadline_seconds`): additive Validierungsgruppe, die nur bei
+    vorhandenen Zeitangaben greift – T1 (Wohlgeformtheit) und T2 (kritischer
+    Pfad ≤ Frist). Operationen `set_time_constraint`/`set_deadline`, Endpunkte
+    `POST /schemas/{id}/time-constraint` und `POST /schemas/{id}/deadline`.
+  - **E4 (teilweise) – Leistungs-KPIs**: `KpiReport` um die Flexibilitäts-
+    Dimension (`adhoc_instances`, `flexibility_adhoc_ratio`) erweitert; Zeit
+    bleibt über die Zykluszeit abgedeckt. **Kosten/Qualität bewusst offen**
+    (keine Daten erfasst – ehrliche Lücke, vgl. §8.4.1/§13.1).
+  Die laufzeit-invasiven Roadmap-Punkte (E1/E2/E6/E9 sowie der Timer-Teil von
+  E5 und Kosten/Qualität in E4) bleiben **bewusst offen** und sind in §13.1
+  ehrlich als solche ausgewiesen.
 - Konzept (`docs/Architektur-Konzept-Prozessmodellierung.md`, v0.9) um Konzepte
   aus ergänzenden Fachquellen erweitert (in eigener Formulierung, mit sauberen
   Quellenangaben): Experten-Priorisierung der 7PMG und Einordnung in den

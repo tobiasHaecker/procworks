@@ -261,8 +261,13 @@ POST /schemas/{id}/conditional-insert
        "branches": [ { "condition": "betrag > 1000", "label": "Freigabe Leitung" },
                      { "condition": "betrag <= 1000", "label": "Freigabe Team" } ] }
 GET  /schemas/{id}/validation       -> { "correct": true, "findings": [] }
+GET  /schemas/{id}/metrics          -> { "metrics": {...}, "hints": [...], "value_classes": {...} }  (lesend, 7PMG)
 PATCH  /schemas/{id}/nodes/{nodeId} { "label": "Antrag fachlich prüfen" }  -> Aktivität umbenennen
 DELETE /schemas/{id}/nodes/{nodeId}                                          -> Knoten/Block entfernen
+POST /schemas/{id}/value-class      { "node_id": "<act>", "value_class": "VALUE_ADDING" }  -> Wertschöpfung (E3)
+POST /schemas/{id}/priority         { "node_id": "<act>", "priority": { "impact": "HIGH", "urgency": "HIGH" } }  -> Priorität (E8)
+POST /schemas/{id}/time-constraint  { "node_id": "<act>", "constraint": { "max_duration_seconds": 3600 } }  -> Dauer (E5)
+POST /schemas/{id}/deadline         { "deadline_seconds": 86400 }  -> Frist; kritischer Pfad ≤ Frist (T2)
 POST /schemas/{id}/release          -> lifecycle_state = RELEASED (immutable)
 ```
 

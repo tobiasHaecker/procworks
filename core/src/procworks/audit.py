@@ -142,7 +142,14 @@ class ActivityStat(BaseModel):
 
 
 class KpiReport(BaseModel):
-    """Aggregated key figures over the event history."""
+    """Aggregated key figures over the event history.
+
+    The figures cover the measurable corners of the Devil's Quadrangle
+    (Section 8.4.1): *time* via the cycle/activity durations and *flexibility*
+    via the share of instances that used an ad-hoc change. Cost and quality are
+    deliberately left out -- the engine collects no cost or rework data, so
+    reporting them would be dishonest (an explicit, documented gap).
+    """
 
     schema_id: str | None = None
     total_instances: int
@@ -150,6 +157,10 @@ class KpiReport(BaseModel):
     completed: int
     avg_cycle_seconds: float | None = None
     activity_stats: list[ActivityStat]
+    #: Number of instances that applied at least one ad-hoc change (E4/E6.5).
+    adhoc_instances: int = 0
+    #: Share of instances with an ad-hoc change (0..1), the flexibility proxy.
+    flexibility_adhoc_ratio: float | None = None
 
 
 class ProcessMapNode(BaseModel):
@@ -211,6 +222,7 @@ def compute_kpis(
     completions: dict[str, int] = {}
     labels: dict[str, str | None] = {}
     durations: dict[str, list[float]] = {}
+    adhoc_instances = 0
 
     for entries in grouped.values():
         created = next(
@@ -225,6 +237,12 @@ def compute_kpis(
                 cycle_times.append((done.timestamp - created.timestamp).total_seconds())
         else:
             running += 1
+
+        if any(
+            e.event_type in (EventType.ADHOC_INSERTED, EventType.ADHOC_DELETED)
+            for e in entries
+        ):
+            adhoc_instances += 1
 
         starts: dict[str, datetime] = {}
         for event in entries:
@@ -266,6 +284,10 @@ def compute_kpis(
             sum(cycle_times) / len(cycle_times) if cycle_times else None
         ),
         activity_stats=activity_stats,
+        adhoc_instances=adhoc_instances,
+        flexibility_adhoc_ratio=(
+            adhoc_instances / len(grouped) if grouped else None
+        ),
     )
 
 

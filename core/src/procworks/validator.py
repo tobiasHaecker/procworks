@@ -62,11 +62,15 @@ def validate(
     schema: ProcessSchema, resolver: SchemaResolver | None = None
 ) -> list[ValidationFinding]:
     """Run structural rules K1-K3, data-flow D1-D4, resource rules Z1-Z4,
-    activity-repository rules A1-A3 and composition rules H1-H4/F1-F4.
+    activity-repository rules A1-A3, composition rules H1-H4/F1-F4 and the
+    temporal rules T1-T2.
 
     ``resolver`` enables the cross-schema composition checks (target must be
     RELEASED, type-conformant mappings, acyclic hierarchy). Without it only the
     local well-formedness of sub-process/follow-up references is checked.
+
+    The temporal rules T1-T2 are silent unless the schema carries temporal
+    annotations, so they never affect time-free models.
 
     Returns all findings (an empty list means the schema is correct).
     """
@@ -79,6 +83,7 @@ def validate(
     findings += _check_connectors(schema)
     findings += _check_resources(schema)
     findings += _check_composition(schema, resolver)
+    findings += _check_temporal(schema)
     return findings
 
 
@@ -1190,3 +1195,115 @@ def _check_follow_ups(
                     )
                 )
     return findings
+
+
+# --- T1-T2: temporal perspective (roadmap E5, additive) ------------------
+
+
+def _check_temporal(schema: ProcessSchema) -> list[ValidationFinding]:
+    """Static time-consistency rules T1 (well-formed) and T2 (critical path).
+
+    These rules only fire when the schema carries temporal annotations
+    (``time_constraints`` and/or ``deadline_seconds``); a model without time
+    data produces no findings, so the check is fully additive.
+
+    * T1: every annotated duration and the deadline are non-negative and refer
+      to an existing node.
+    * T2: the critical path (longest accumulated duration from START to END)
+      must not exceed the schema deadline. Parallel/alternative branches are
+      treated by their longest branch (worst case), so the bound is sound.
+    """
+
+    if not schema.time_constraints and schema.deadline_seconds is None:
+        return []
+
+    findings: list[ValidationFinding] = []
+
+    # T1: well-formedness of the annotations.
+    if schema.deadline_seconds is not None and schema.deadline_seconds < 0:
+        findings.append(
+            ValidationFinding(
+                rule="T1",
+                message=(
+                    f"deadline_seconds must be >= 0, got {schema.deadline_seconds}"
+                ),
+            )
+        )
+    for node_id, constraint in schema.time_constraints.items():
+        if node_id not in schema.nodes:
+            findings.append(
+                ValidationFinding(
+                    rule="T1",
+                    message=f"time constraint references unknown node '{node_id}'",
+                    node_id=node_id,
+                )
+            )
+            continue
+        duration = constraint.max_duration_seconds
+        if duration is not None and duration < 0:
+            findings.append(
+                ValidationFinding(
+                    rule="T1",
+                    message=(
+                        f"max_duration_seconds of '{node_id}' must be >= 0, "
+                        f"got {duration}"
+                    ),
+                    node_id=node_id,
+                )
+            )
+
+    # T2: the critical path must fit the deadline (only when a deadline exists
+    # and the annotations so far are well-formed).
+    if schema.deadline_seconds is not None and not findings:
+        critical = _critical_path_seconds(schema)
+        if critical is not None and critical > schema.deadline_seconds:
+            findings.append(
+                ValidationFinding(
+                    rule="T2",
+                    message=(
+                        f"critical path of {critical:g}s exceeds the deadline of "
+                        f"{schema.deadline_seconds:g}s"
+                    ),
+                )
+            )
+    return findings
+
+
+def _critical_path_seconds(schema: ProcessSchema) -> float | None:
+    """Longest accumulated max-duration from START to END, or ``None``.
+
+    Returns ``None`` if the control graph is not a well-formed DAG (e.g. during
+    incremental construction); the structural rules cover those cases instead.
+    """
+
+    nodes = schema.nodes
+    if not nodes:
+        return None
+    indegree: dict[str, int] = {nid: 0 for nid in nodes}
+    succ: dict[str, list[str]] = {nid: [] for nid in nodes}
+    for edge in schema.edges:
+        if edge.source in nodes and edge.target in nodes:
+            succ[edge.source].append(edge.target)
+            indegree[edge.target] += 1
+
+    def duration(node_id: str) -> float:
+        constraint = schema.time_constraints.get(node_id)
+        if constraint is None or constraint.max_duration_seconds is None:
+            return 0.0
+        return constraint.max_duration_seconds
+
+    complete: dict[str, float] = {}
+    queue: deque[str] = deque(nid for nid, deg in indegree.items() if deg == 0)
+    visited = 0
+    while queue:
+        current = queue.popleft()
+        visited += 1
+        complete[current] = complete.get(current, 0.0) + duration(current)
+        for target in succ[current]:
+            complete[target] = max(complete.get(target, 0.0), complete[current])
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                queue.append(target)
+    if visited != len(nodes):  # a cycle -> not a DAG, leave to structural rules
+        return None
+    return max(complete.values(), default=0.0)
