@@ -158,6 +158,14 @@ Im Abschnitt `api:` den `environment:`-Block so ergänzen, dass das
       - "8000"
 ```
 
+> Hinweis: `PROCWORKS_AUTH: "password"` ist im mitgelieferten Compose-Stack
+> bereits Standard. Lässt man `PROCWORKS_ADMIN_LOGIN`/`PROCWORKS_ADMIN_PASSWORD`
+> weg, legt der Server beim ersten Start automatisch ein `admin`-Konto an und
+> schreibt dessen zufälliges Einmal-Passwort ins API-Log
+> (`docker compose -f deploy/docker-compose.full.yml logs api`). Das oben
+> gezeigte feste Startpasswort ist die Alternative, wenn man es nicht aus dem Log
+> ablesen möchte.
+
 ### 5.3 Optional: eigene Domain mit HTTPS
 
 Für den Betrieb unter einer öffentlichen Domain im Abschnitt `web:` die beiden

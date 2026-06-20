@@ -48,9 +48,12 @@ nachdem ein Fix verfügbar ist.
 Die API trägt eine austauschbare Auth-Schicht am Boundary (`auth.py`,
 Auth-Konzept Variante C). Hinweise für den produktiven Betrieb:
 
-- **Standardmodus ist „offen"** (`PROCWORKS_AUTH=open`): keine Identitätsprüfung,
+- **Code-Standardmodus ist „offen“** (`PROCWORKS_AUTH=open`): keine Identitätsprüfung,
   alle Rollen freigegeben. Dieser Modus ist ausschließlich für die lokale
-  Entwicklung gedacht und darf **nicht** öffentlich exponiert werden.
+  Entwicklung gedacht und darf **nicht** öffentlich exponiert werden. Der
+  gebündelte Produktions-Stack ([deploy/docker-compose.full.yml](deploy/docker-compose.full.yml)
+  und das Helm-Chart, `api.authMode`) setzt daher standardmäßig
+  `PROCWORKS_AUTH=password`.
 - **Produktiv** `PROCWORKS_AUTH=token` setzen und Tokens über `PROCWORKS_TOKENS`
   (JSON-Datei) bereitstellen. Tokens werden nur als SHA-256-Digest gehalten.
   Die Token-Datei gehört nicht ins Repository und sollte restriktive
@@ -61,12 +64,14 @@ Auth-Konzept Variante C). Hinweise für den produktiven Betrieb:
   und konstant-zeitlich verglichen; Klartext wird nie gespeichert. Login-
   Sessions sind opake Bearer-Token, nur als SHA-256-Digest im Speicher
   gehalten (Neustart erzwingt erneutes Login). Neue Nutzer erhalten ein
-  zufälliges Initialpasswort mit erzwungener Änderung beim ersten Login
-  (min. 8 Zeichen, ungleich dem alten). Der Initial-Admin wird über
-  `PROCWORKS_ADMIN_LOGIN`/`PROCWORKS_ADMIN_PASSWORD` provisioniert – diese
-  Variablen als Secrets behandeln und nach dem ersten Login-/Passwortwechsel
-  nicht dauerhaft im Klartext halten. Session-Dauer über
-  `PROCWORKS_SESSION_TTL_MINUTES`.
+  zufälligem Initialpasswort mit erzwungener Änderung beim ersten Login
+  (min. 8 Zeichen, ungleich dem alten). Der Initial-Admin kann über
+  `PROCWORKS_ADMIN_LOGIN`/`PROCWORKS_ADMIN_PASSWORD` fest provisioniert werden
+  (diese Variablen als Secrets behandeln); ist nichts gesetzt und der
+  Credential-Store noch leer, legt der Server beim ersten Start automatisch ein
+  `admin`-Konto an und schreibt dessen zufälliges Einmal-Passwort **einmalig
+  ins Server-Log** (z. B. `docker compose logs api`) – dort ablesen und sofort
+  ändern. Session-Dauer über `PROCWORKS_SESSION_TTL_MINUTES`.
 - **CORS** über `PROCWORKS_CORS_ORIGINS` (kommagetrennt) auf die tatsächlich
   erlaubten Ursprünge einschränken; der Default `*` ist nur für die Entwicklung.
 - Die handelnde Bearbeiter-Identität wird bei `complete`/`decide` aus dem

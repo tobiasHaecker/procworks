@@ -90,6 +90,10 @@ Damit ein Mitarbeiter überhaupt Aufgaben sieht, müssen diese Punkte erfüllt s
 - Mit der Rolle **Bearbeiter** (operator) blendet die Navigation automatisch nur
   **„Meine Aufgaben"** (und **Monitoring**) ein – Modellier- und Admin-Sichten
   bleiben verborgen.
+- Ein **Modellierer** (modeler) ist zugleich Bearbeiter: er sieht „Meine
+  Aufgaben" und „Ausführung" zusätzlich zu den Modellier-Sichten und kann eigene
+  **Entwürfe als Test-Instanz** starten (diese Testläufe zählen nicht ins
+  Monitoring). Für reine Aufgabenbearbeitung genügt die Rolle **Bearbeiter**.
 - Reine Sachbearbeiter-Aufgaben werden vollständig über **„Meine Aufgaben"**
   erledigt. **Verzweigungsentscheidungen** (XOR, „Zweig wählen") laufen in der
   Sicht **Ausführung**.

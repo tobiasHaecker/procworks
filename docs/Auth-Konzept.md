@@ -164,12 +164,20 @@ def create_auth_backend() -> AuthBackend:
 
 Vier grobe Rollen, die die feingranulare BZR-Logik **ergänzen**, nicht ersetzen:
 
-| Rolle      | Darf (grob)                                                        |
-| ---------- | ----------------------------------------------------------------- |
-| `admin`    | alles (Org-/Connector-/Template-Verwaltung)                       |
-| `modeler`  | Schemata erstellen/ändern, Operationen, Freigabe                  |
-| `operator` | Instanzen starten, Aktivitäten abschließen, Verzweigungen wählen  |
-| `viewer`   | nur lesend: Schemata, Instanzen, Aufgaben, Monitoring/KPIs        |
+| Rolle      | Darf (grob)                                                                          |
+| ---------- | ----------------------------------------------------------------------------------- |
+| `admin`    | alles (Org-/Connector-/Template-/Nutzer-Verwaltung), alle GUI-Funktionen            |
+| `modeler`  | Schemata/Daten/Organisation modellieren, Freigabe **und** ist zugleich Bearbeiter: Aufgaben über „Meine Aufgaben" erledigen, Instanzen ausführen, eigene **Entwürfe als Test-Instanz** starten. Keine Admin-/Verwaltungssichten |
+| `operator` | freigegebene Instanzen starten, Aktivitäten abschließen, Verzweigungen wählen, Monitoring lesen |
+| `viewer`   | nur lesend: Schemata, Instanzen, Aufgaben, Monitoring/KPIs (kein Instanzstart)      |
+
+**Instanzstart** hängt zusätzlich vom Lebenszyklus des Schemas ab
+(`POST /schemas/{id}/instances`):
+
+| Schema-Zustand        | wer darf starten            | Ergebnis                                  |
+| --------------------- | --------------------------- | ----------------------------------------- |
+| RELEASED (freigegeben)| `operator`, `modeler`, `admin` | reguläre Instanz                       |
+| ENTWURF / nicht-RELEASED | nur `modeler`, `admin`   | als `is_test`-Instanz markiert; schreibt **keine** Audit-Events und ist damit aus Monitoring-KPIs, Prozesskarte und Timeline ausgeschlossen |
 
 Durchsetzung über einen Dependency-Factory:
 

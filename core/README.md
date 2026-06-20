@@ -181,7 +181,12 @@ Interaktive Dokumentation (OpenAPI/Swagger) danach unter
 ### Authentifizierung & Rollen (optional)
 
 Standardmäßig läuft die API im **offenen Entwicklungsmodus** ohne Login: jeder
-Aufruf erhält alle Rollen (`admin`, `modeler`, `operator`, `viewer`). Für einen
+Aufruf erhält alle Rollen (`admin`, `modeler`, `operator`, `viewer`). Die Rollen
+staffeln sich grob so: `admin` darf alles; der **Modellierer** (`modeler`)
+modelliert *und* ist zugleich Bearbeiter (erledigt Aufgaben über „Meine
+Aufgaben", führt Instanzen aus und darf eigene **Entwürfe als Test-Instanz**
+starten); `operator` startet/bearbeitet nur **freigegebene** Instanzen und liest
+das Monitoring; `viewer` ist rein lesend (kein Instanzstart). Für einen
 geschützten Betrieb wird ein Token-Backend aktiviert:
 
 ```powershell
@@ -217,7 +222,10 @@ Für eigenständige Deployments gibt es ein selbstständiges Passwort-Login
 (`PROCWORKS_AUTH=password`). Zugangsdaten liegen in einem separaten
 `CredentialStore` (bei gesetzter `DATABASE_URL` persistent, sonst im Speicher) –
 getrennt vom Agenten-/Org-Modell. Damit überhaupt jemand Nutzer anlegen kann,
-wird beim Start ein Initial-Admin provisioniert:
+wird beim Start ein Initial-Admin provisioniert. Ohne die folgenden Variablen
+legt der Server bei leerem Store automatisch ein `admin`-Konto an und schreibt
+dessen zufälliges Einmal-Passwort einmalig ins Server-Log (dort ablesen, beim
+ersten Login ändern); alternativ fest vorgeben:
 
 ```powershell
 $env:PROCWORKS_AUTH="password"
