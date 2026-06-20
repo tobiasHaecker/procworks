@@ -31,6 +31,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "procworks.database.secretName" . }}
                   key: {{ .Values.database.secretKey }}
+            - name: PROCWORKS_AUTH
+              value: {{ .Values.api.authMode | quote }}
+            {{- if .Values.api.adminSecret }}
+            - name: PROCWORKS_ADMIN_LOGIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.adminSecret }}
+                  key: login
+            - name: PROCWORKS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.adminSecret }}
+                  key: password
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health

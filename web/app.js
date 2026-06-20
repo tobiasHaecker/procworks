@@ -1174,7 +1174,9 @@ async function viewRun() {
       el("span", { class: "spacer", style: "flex:1" }),
       schema.lifecycle_state === "RELEASED"
         ? el("button", { class: "btn small primary", onClick: startInstance }, "\u25B6 Instanz starten")
-        : el("span", { class: "muted", style: "font-size:12px" }, "Nur freigegebene Schemata sind instanziierbar.")));
+        : hasRole("modeler", "admin")
+          ? el("button", { class: "btn small", onClick: startInstance }, "\u25B6 Test-Instanz starten")
+          : el("span", { class: "muted", style: "font-size:12px" }, "Nur freigegebene Schemata sind instanziierbar.")));
   content.appendChild(header);
 
   if (!state.instance) {
@@ -1189,7 +1191,7 @@ async function startInstance() {
     const inst = await api.post(`/schemas/${state.schemaId}/instances`);
     await loadInstance(inst.id);
     render();
-    toast("ok", "Instanz gestartet", [inst.id]);
+    toast("ok", inst.is_test ? "Test-Instanz gestartet" : "Instanz gestartet", [inst.id]);
   } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
 }
 
@@ -1207,7 +1209,8 @@ async function renderInstanceDetail(container, withActions) {
   const statePill = el("span", { class: "pill " + (inst.state === "COMPLETED" ? "pill-green" : "pill-blue") }, inst.state);
 
   const graphPanel = el("div", { class: "panel" },
-    el("div", { class: "panel-h" }, el("h2", null, "Live-Prozesslandkarte"), el("span", { class: "sub" }, inst.id), statePill),
+    el("div", { class: "panel-h" }, el("h2", null, "Live-Prozesslandkarte"), el("span", { class: "sub" }, inst.id), statePill,
+      inst.is_test ? el("span", { class: "pill pill-amber", title: "Test-Instanz \u2013 nicht im Monitoring gez\u00E4hlt" }, "TEST") : null),
     el("div", { class: "panel-b" }, renderGraph(runSchema, { instance: inst })));
 
   // Worklist
@@ -1566,8 +1569,8 @@ const VIEW_ROLES = {
   model: ["modeler", "admin"],
   data: ["modeler", "admin"],
   org: ["modeler", "admin"],
-  run: ["operator", "admin"],
-  tasks: ["operator", "admin"],
+  run: ["operator", "modeler", "admin"],
+  tasks: ["operator", "modeler", "admin"],
   monitor: ["viewer", "operator", "modeler", "admin"],
 };
 

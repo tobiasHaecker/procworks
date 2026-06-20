@@ -286,11 +286,17 @@ def test_instance_run_via_api() -> None:
     assert resp.json()["state"] == "COMPLETED"
 
 
-def test_instantiate_draft_returns_409() -> None:
+def test_instantiate_draft_starts_test_instance() -> None:
+    # In open dev mode the principal holds every role (incl. modeler/admin), so
+    # a draft schema can be started as a flagged, KPI-excluded *test* instance.
     sid = client.post("/schemas", json={"name": "NochEntwurf"}).json()["id"]
     resp = client.post(f"/schemas/{sid}/instances")
-    assert resp.status_code == 409
-    assert "message" in resp.json()["detail"]
+    assert resp.status_code == 201
+    instance = resp.json()
+    assert instance["is_test"] is True
+    # Test instances record no audit events -> they never reach the KPIs.
+    kpis = client.get(f"/monitoring/kpis?schema_id={sid}").json()
+    assert kpis["total_instances"] == 0
 
 
 def test_subprocess_via_api() -> None:

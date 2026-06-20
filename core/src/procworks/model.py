@@ -610,3 +610,7 @@ class ProcessInstance(BaseModel):
     #: Human-readable log of the applied ad-hoc deltas (R1/R2), used for
     #: traceability and the migration ad-hoc compatibility check (M5).
     ad_hoc_deltas: list[str] = Field(default_factory=list)
+    #: Marks a throw-away test run started from a non-RELEASED (draft) schema by
+    #: a modeller/admin. Test instances are excluded from monitoring KPIs (no
+    #: audit events are recorded for them) and flagged as such in the UI.
+    is_test: bool = False

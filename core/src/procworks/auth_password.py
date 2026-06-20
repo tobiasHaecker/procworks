@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import re
 import secrets
@@ -35,6 +36,11 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 from procworks.auth import ALL_ROLES, AuthError, Principal, bearer_token
+
+#: Login used for the auto-provisioned initial admin when none is configured.
+DEFAULT_ADMIN_LOGIN = "admin"
+
+_logger = logging.getLogger("procworks.auth")
 
 #: Minimum length enforced for a self-chosen password.
 MIN_PASSWORD_LENGTH = 8
@@ -273,27 +279,58 @@ class PasswordAuthBackend:
         """Seed an initial admin so password mode is usable on a fresh store.
 
         Without this, a brand-new credential store has no user and nobody could
-        log in to create the first one. ``PROCWORKS_ADMIN_LOGIN`` /
-        ``PROCWORKS_ADMIN_PASSWORD`` provision exactly one admin and only when
-        that login does not exist yet (idempotent across restarts). The admin
-        must change the seeded password on first login.
+        log in to create the first one. Two paths:
+
+        * ``PROCWORKS_ADMIN_LOGIN`` / ``PROCWORKS_ADMIN_PASSWORD`` provision
+          exactly one admin with a known password (idempotent across restarts).
+        * Otherwise, when the store holds *no users at all*, a default admin
+          (login ``admin``) is created with a freshly generated password that is
+          written to the server log once -- the operator reads it from the log
+          and must change it on first login.
         """
 
         login = os.environ.get("PROCWORKS_ADMIN_LOGIN")
         password = os.environ.get("PROCWORKS_ADMIN_PASSWORD")
-        if not login or not password:
+        display_name = os.environ.get("PROCWORKS_ADMIN_NAME")
+
+        if login and password:
+            if self._store.get_user(login) is not None:
+                return
+            self._store.put_user(
+                User(
+                    login=login,
+                    password_hash=hash_password(password),
+                    subject=login,
+                    roles=frozenset({"admin"}),
+                    display_name=display_name,
+                    must_change=True,
+                )
+            )
             return
-        if self._store.get_user(login) is not None:
+
+        # No explicit admin password configured: only seed when the store is
+        # completely fresh, so we never resurrect a deleted admin or clobber an
+        # existing deployment.
+        if self._store.list_users():
             return
+        login = login or DEFAULT_ADMIN_LOGIN
+        password = generate_initial_password()
         self._store.put_user(
             User(
                 login=login,
                 password_hash=hash_password(password),
                 subject=login,
                 roles=frozenset({"admin"}),
-                display_name=os.environ.get("PROCWORKS_ADMIN_NAME"),
+                display_name=display_name,
                 must_change=True,
             )
+        )
+        _logger.warning(
+            "Initial admin account created (login=%r, temporary password=%r). "
+            "Log in and change this password immediately; it will not be shown "
+            "again.",
+            login,
+            password,
         )
 
     # -- AuthBackend protocol ----------------------------------------------

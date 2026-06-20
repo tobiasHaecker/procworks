@@ -243,12 +243,42 @@ def test_bootstrap_admin_seeds_from_env(monkeypatch: pytest.MonkeyPatch) -> None
     assert backend.login("root", "rootpass1").must_change is True
 
 
-def test_bootstrap_admin_noop_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_admin_autoseeds_default_without_env(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     monkeypatch.delenv("PROCWORKS_ADMIN_LOGIN", raising=False)
     monkeypatch.delenv("PROCWORKS_ADMIN_PASSWORD", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    backend = PasswordAuthBackend.from_env()
-    assert backend.store.list_users() == []
+    with caplog.at_level("WARNING", logger="procworks.auth"):
+        backend = PasswordAuthBackend.from_env()
+    admin = backend.store.get_user("admin")
+    assert admin is not None
+    assert "admin" in admin.roles
+    assert admin.must_change is True
+    # The one-off password is written to the server log so the operator can read
+    # it; it is never stored or returned in clear text otherwise.
+    assert any("Initial admin account created" in r.message for r in caplog.records)
+
+
+def test_bootstrap_admin_does_not_reseed_existing_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PROCWORKS_ADMIN_LOGIN", raising=False)
+    monkeypatch.delenv("PROCWORKS_ADMIN_PASSWORD", raising=False)
+    store = InMemoryCredentialStore()
+    store.put_user(
+        User(
+            login="ops",
+            password_hash=hash_password("pw"),
+            subject="ops",
+            roles=frozenset({"operator"}),
+        )
+    )
+    backend = PasswordAuthBackend(store)
+    backend._bootstrap_admin()
+    # A non-empty store is left untouched: no resurrected default admin.
+    assert backend.store.get_user("admin") is None
+    assert [u.login for u in backend.store.list_users()] == ["ops"]
 
 
 # --- API integration ------------------------------------------------------

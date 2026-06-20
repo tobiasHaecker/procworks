@@ -126,6 +126,65 @@ def test_admin_may_do_everything(token_mode: None) -> None:
     ).status_code == 201
 
 
+# --- instance start: released vs. draft (test) instances ------------------
+
+
+def _released_schema(headers: dict[str, str]) -> str:
+    """Create and release a one-activity schema, returning its id."""
+
+    sid = client.post("/schemas", json={"name": "Start"}, headers=headers).json()["id"]
+    client.post(
+        f"/schemas/{sid}/serial-insert",
+        json={"label": "Tun", "after_node_id": "start"},
+        headers=headers,
+    )
+    client.post(f"/schemas/{sid}/release", headers=headers)
+    return sid
+
+
+def _draft_schema(headers: dict[str, str]) -> str:
+    """Create a one-activity schema and leave it in ENTWURF, returning its id."""
+
+    sid = client.post("/schemas", json={"name": "Entwurf"}, headers=headers).json()["id"]
+    client.post(
+        f"/schemas/{sid}/serial-insert",
+        json={"label": "Tun", "after_node_id": "start"},
+        headers=headers,
+    )
+    return sid
+
+
+def test_operator_may_start_released_instance(token_mode: None) -> None:
+    sid = _released_schema(_auth("admin-token"))
+    resp = client.post(f"/schemas/{sid}/instances", headers=_auth("op-token"))
+    assert resp.status_code == 201
+    assert resp.json()["is_test"] is False
+
+
+def test_viewer_may_not_start_instance(token_mode: None) -> None:
+    sid = _released_schema(_auth("admin-token"))
+    resp = client.post(f"/schemas/{sid}/instances", headers=_auth("viewer-token"))
+    assert resp.status_code == 403
+
+
+def test_operator_may_not_start_draft_test_instance(token_mode: None) -> None:
+    sid = _draft_schema(_auth("admin-token"))
+    resp = client.post(f"/schemas/{sid}/instances", headers=_auth("op-token"))
+    assert resp.status_code == 403
+
+
+def test_modeler_may_start_draft_test_instance(token_mode: None) -> None:
+    sid = _draft_schema(_auth("modeler-token"))
+    resp = client.post(f"/schemas/{sid}/instances", headers=_auth("modeler-token"))
+    assert resp.status_code == 201
+    assert resp.json()["is_test"] is True
+
+
+def test_modeler_may_read_worklist(token_mode: None) -> None:
+    # A modeller may also be an affected employee working their own tasks.
+    assert client.get("/me/tasks", headers=_auth("modeler-token")).status_code == 200
+
+
 # --- bound worklist + impersonation gap ----------------------------------
 
 

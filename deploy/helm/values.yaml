@@ -18,6 +18,16 @@ image:
 api:
   replicaCount: 2
   port: 8000
+  # Authentication mode for the API boundary. Production default is "password"
+  # (username/password login with coarse RBAC); use "open" only for throwaway
+  # demos -- it grants every role without authentication. On a fresh store a
+  # default 'admin' account is auto-created and its one-off password is written
+  # to the API pod log; log in and change it on first use.
+  authMode: password
+  # Optional: reference a Secret with `login` and `password` keys to pin a known
+  # initial admin instead of the auto-generated one. Leave empty to use the
+  # logged auto-generated password.
+  adminSecret: ""
   # DATABASE_URL is read from a Kubernetes Secret (never hard-code credentials).
   # When `database.createSecret` is true the chart creates it from
   # `database.url`; otherwise set `database.existingSecret` to your own secret.

@@ -103,10 +103,12 @@ def instantiate(
     parent_instance_id: str | None = None,
     parent_node_id: str | None = None,
     initial_data: dict[str, object] | None = None,
+    allow_unreleased: bool = False,
+    is_test: bool = False,
 ) -> ProcessInstance:
     """Create a running instance of a RELEASED schema.
 
-    requires: schema is RELEASED.
+    requires: schema is RELEASED (unless ``allow_unreleased`` is set).
     ensures:  all nodes NOT_ACTIVATED / all edges NOT_SIGNALED, then the start
               node is activated and the markings are advanced to the first
               activities (or the end).
@@ -116,9 +118,13 @@ def instantiate(
     ``initial_data`` seeds the process variables (used for sub-process input
     mappings); ``parent_instance_id`` / ``parent_node_id`` link a child back to
     the SUBPROCESS node that spawned it.
+
+    ``allow_unreleased`` lets a modeller/admin spin up a *test* instance of a
+    draft schema (the structure is still CbC-validated); set ``is_test`` so the
+    instance is flagged and kept out of the monitoring KPIs.
     """
 
-    if schema.lifecycle_state is not LifecycleState.RELEASED:
+    if schema.lifecycle_state is not LifecycleState.RELEASED and not allow_unreleased:
         raise ExecutionError(
             f"cannot instantiate schema in state {schema.lifecycle_state.value}; "
             "only RELEASED schemas can be instantiated"
@@ -133,6 +139,7 @@ def instantiate(
         data_values=dict(initial_data or {}),
         parent_instance_id=parent_instance_id,
         parent_node_id=parent_node_id,
+        is_test=is_test,
     )
     instance.node_states[schema.start_node().id] = NodeState.ACTIVATED
     if context is not None:

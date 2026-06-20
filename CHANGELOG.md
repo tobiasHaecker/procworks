@@ -9,6 +9,25 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **RBAC-Verfeinerung & Test-Instanzen für Entwürfe**: Der `Modellierer`
+  (`modeler`) ist jetzt zugleich betroffener Mitarbeiter – er darf Aufgaben über
+  „Meine Aufgaben“ bearbeiten, Instanzen ausführen und **eigene Entwürfe als
+  Test-Instanz starten** (Sicht „Ausführung“ + „Meine Aufgaben“ sind für ihn
+  sichtbar). `operator` behält Ausführung/Aufgaben/Monitoring (lesend),
+  `viewer` bleibt rein lesend (nur Monitoring, kein Instanzstart).
+  - Nicht freigegebene (Entwurf-)Schemata können von `modeler`/`admin` als
+    `is_test`-markierte Wegwerf-Instanz gestartet werden. Test-Instanzen
+    schreiben **keine** Audit-Events und sind damit aus den Monitoring-KPIs,
+    der Process-Map und der Timeline ausgeschlossen. Der Engine-Aufruf
+    `instantiate(..., allow_unreleased=…, is_test=…)` und das Feld
+    `ProcessInstance.is_test` sind additiv.
+  - Produktionsbetrieb läuft standardmäßig im **Passwort-Login**
+    (`PROCWORKS_AUTH=password` in `deploy/docker-compose.full.yml` und im
+    Helm-Chart `api.authMode`); der offene Modus bleibt nur für Dev/Test. Beim
+    ersten Start eines leeren Credential-Stores wird automatisch ein
+    `admin`-Konto mit zufälligem Einmal-Passwort angelegt und ins Server-Log
+    geschrieben (erzwungener Passwortwechsel bei der ersten Anmeldung).
+
 - Konzeptgetriebene, **additive** Tool-Erweiterungen aus der Roadmap §13.1
   umgesetzt – ohne ein bestehendes Korrektheitskriterium zu lockern und mit
   eigenen Tests (Kern weiterhin vollständig grün, 338 Tests):

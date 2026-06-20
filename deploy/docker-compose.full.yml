@@ -31,6 +31,13 @@ services:
     environment:
       # Durable schema, instance and audit-event persistence.
       DATABASE_URL: postgresql+psycopg://process:process@postgres:5432/procworks
+      # Production default: require username/password login (the open dev mode
+      # grants every role without authentication). On first start a default
+      # 'admin' account is created and its one-off password is written to the
+      # API container log (`docker compose logs api`) -- log in and change it.
+      # Pin a known admin instead by setting PROCWORKS_ADMIN_LOGIN +
+      # PROCWORKS_ADMIN_PASSWORD.
+      PROCWORKS_AUTH: password
     depends_on:
       postgres:
         condition: service_healthy

@@ -60,6 +60,7 @@ from procworks.model import (
     FollowUpTrigger,
     ImpactUrgency,
     InstanceState,
+    LifecycleState,
     OrgModel,
     ProcessInstance,
     ProcessSchema,
@@ -148,10 +149,12 @@ def require_role(*allowed: str) -> Callable[[Principal], Principal]:
 
 
 # Reusable role gates (see Auth concept 3.4). ``viewer`` is the read floor that
-# every authenticated role clears; writes need modeler/operator/admin.
+# every authenticated role clears; writes need modeler/operator/admin. The
+# ``modeler`` is also a runtime actor: they may work tasks and drive execution
+# (including testing their own draft schemas), so they share the ``_run`` gate.
 _read = Depends(require_role("viewer", "operator", "modeler", "admin"))
 _model = Depends(require_role("modeler", "admin"))
-_run = Depends(require_role("operator", "admin"))
+_run = Depends(require_role("operator", "modeler", "admin"))
 _admin = Depends(require_role("admin"))
 
 
@@ -1344,11 +1347,37 @@ def list_instances() -> list[str]:
     "/schemas/{schema_id}/instances",
     response_model=ProcessInstance,
     status_code=201,
-    dependencies=[_run],
 )
-def post_instantiate(schema_id: str) -> ProcessInstance:
+def post_instantiate(
+    schema_id: str, principal: Principal = Depends(get_principal)
+) -> ProcessInstance:
+    """Start an instance of a schema.
+
+    A RELEASED schema may be instantiated for real by operator/modeler/admin.
+    A non-released (draft) schema may only be started as a throw-away *test*
+    instance, and only by a modeller/admin -- it is flagged ``is_test`` and no
+    audit events are recorded, so it never pollutes the monitoring KPIs.
+    """
+
     schema = _get_or_404(schema_id)
-    instance = _run_or_409(lambda: exe.instantiate(schema, context=_context))
+    released = schema.lifecycle_state is LifecycleState.RELEASED
+    if released:
+        if not principal.roles.intersection({"operator", "modeler", "admin"}):
+            raise HTTPException(status_code=403, detail="forbidden")
+    elif not principal.roles.intersection({"modeler", "admin"}):
+        raise HTTPException(
+            status_code=403,
+            detail="only modellers/admins may start a test instance of a draft",
+        )
+    is_test = not released
+    instance = _run_or_409(
+        lambda: exe.instantiate(
+            schema, context=_context, allow_unreleased=not released, is_test=is_test
+        )
+    )
+    if is_test:
+        # Test instances stay out of the audit log (and therefore the KPIs).
+        return instance
     _audit.append(
         EventType.INSTANCE_CREATED,
         instance.id,
@@ -1413,7 +1442,7 @@ def _tasks_for_agent(agent_id: str) -> list[OpenTask]:
 
 @app.get("/me/tasks", response_model=list[OpenTask])
 def get_my_tasks(
-    principal: Principal = Depends(require_role("operator", "admin")),
+    principal: Principal = Depends(require_role("operator", "modeler", "admin")),
 ) -> list[OpenTask]:
     """The worklist of the logged-in agent (the bound principal's own tasks)."""
 
@@ -1425,7 +1454,8 @@ def get_my_tasks(
 
 @app.get("/agents/{agent_id}/tasks", response_model=list[OpenTask])
 def get_agent_tasks(
-    agent_id: str, principal: Principal = Depends(require_role("operator", "admin"))
+    agent_id: str,
+    principal: Principal = Depends(require_role("operator", "modeler", "admin")),
 ) -> list[OpenTask]:
     # A bound, non-supervisor operator may only read their own worklist; an
     # admin/modeler may inspect any agent's list (supervision).
@@ -1458,7 +1488,7 @@ def post_start_activity(instance_id: str, req: StartActivityRequest) -> ProcessI
 def post_complete_activity(
     instance_id: str,
     req: CompleteActivityRequest,
-    principal: Principal = Depends(require_role("operator", "admin")),
+    principal: Principal = Depends(require_role("operator", "modeler", "admin")),
 ) -> ProcessInstance:
     before = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(before)
@@ -1485,7 +1515,7 @@ def post_complete_activity(
 def post_decide_branch(
     instance_id: str,
     req: DecideBranchRequest,
-    principal: Principal = Depends(require_role("operator", "admin")),
+    principal: Principal = Depends(require_role("operator", "modeler", "admin")),
 ) -> ProcessInstance:
     before = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(before)
