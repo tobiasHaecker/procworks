@@ -166,7 +166,7 @@ Diese Kriterien definieren, was „stabil/korrekt" konkret bedeutet, und bilden 
 
 ### 3.1 Struktur- und Kontrollfluss-Korrektheit
 
-Die folgenden Regeln entsprechen den in ADEPT systemseitig erzwungenen Strukturregeln (vgl. Reichert, Diss. 2000; Kapitel 9).
+Die folgenden Regeln entsprechen den in ADEPT systemseitig erzwungenen Strukturregeln (vgl. Reichert, Diss. 2000).
 
 - **K1 – Wohlgeformtheit:** Der Graph ist ein blockstrukturierter, sauber geschachtelter Kontrollgraph; jeder Split hat genau einen korrespondierenden Join desselben Typs (**eineindeutige** XOR-Split/Join-, AND-Split/Join- und LOOP-Start/End-Zuordnung).
 - **K2 – Ein-/Ausgang:** Genau ein START- und ein END-Knoten; START hat keinen eingehenden, END keinen ausgehenden Kontrollkonnektor. Jeder Aktivitätsknoten hat genau einen eingehenden und genau einen ausgehenden Kontrollkonnektor.
@@ -1236,10 +1236,9 @@ Die folgenden Punkte ergeben sich unmittelbar aus den oben ergänzten Konzeptabs
 
 ## 15. Quellen
 
-- **Dadam, P.; Reichert, M.; Rinderle-Ma, S.; u. a.:** Publikationen zum **ADEPT-Projekt** (Universität Ulm) zu „Correctness by Construction" sowie zur flexiblen, robusten Ausführung von Unternehmensprozessen (u. a. EMISA-Forum). Grundlage für: Motivation/Herausforderungen (Robustheit, Flexibilität, Benutzbarkeit), ADEPT-Meta-Modell, High-Level-Änderungsoperationen, SOA-Architektur, Schema-Evolution.
-- **Reichert, M.:** Vorlesung *Business Process Management*, Kapitel 9 – Implementierung prozessorientierter Informationssysteme. Grundlage für: Anforderungen an Modellierungssprachen, Struktur-/Ausführungsregeln, Zustands-/Markierungsmodell, Datenfluss, Bearbeiterzuordnung/OrgModel, Ausführungsumgebung, Activity Templates, Inbetriebnahme.
-- **Reichert, M.:** *Dynamische Ablaufänderungen in Workflow-Management-Systemen.* Dissertation, Universität Ulm, 2000 (formale Struktur- und Ausführungsregeln).
-- **Reichert, M.; Weber, B.:** *Enabling Flexibility in Process-Aware Information Systems.* Springer, 2012. (Zitierschlüssel **[RW12]**: PAIS-Einordnung, Prozessperspektiven, zeitliche Perspektive.)
+- **Dadam, P.; Reichert, M.; Rinderle-Ma, S.; u. a.:** Begutachtete Publikationen zum **ADEPT-Projekt** (Universität Ulm) zu „Correctness by Construction" sowie zur flexiblen, robusten Ausführung von Unternehmensprozessen. Grundlage für: Motivation/Herausforderungen (Robustheit, Flexibilität, Benutzbarkeit), ADEPT-Meta-Modell, High-Level-Änderungsoperationen, SOA-Architektur, Schema-Evolution.
+- **Reichert, M.:** *Dynamische Ablaufänderungen in Workflow-Management-Systemen.* Dissertation, Universität Ulm, 2000. Grundlage für: formale Struktur- und Ausführungsregeln, Anforderungen an Modellierungssprachen, Zustands-/Markierungsmodell, Datenfluss, Bearbeiterzuordnung/OrgModel, Activity Templates.
+- **Reichert, M.; Weber, B.:** *Enabling Flexibility in Process-Aware Information Systems.* Springer, 2012. (Zitierschlüssel **[RW12]**: PAIS-Einordnung, Prozessperspektiven, Ausführungsumgebung, zeitliche Perspektive.)
 - OMG BPMN 2.0 / ISO 19510 (Übersicht zu BPMN 2.0).
 - Weske, M.: *Business Process Management: Concepts, Languages, Architectures.* Dumas et al.: *Process-Aware Information Systems.*
 
