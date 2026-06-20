@@ -8,6 +8,8 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
+## [0.2.0] - 2026-06-20
+
 ### Hinzugefügt
 - **Beispieldaten & administrativer Reset**: Ein eingebauter Demo-Datensatz
   (`procworks/demo.py`) macht alle Funktionen sofort greifbar – die geteilte
@@ -172,4 +174,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Community-Dateien: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`.
 - Issue-/Pull-Request-Templates und `CODEOWNERS`.
 
-[Unveröffentlicht]: https://github.com/tobiasHaecker/procworks/commits/main
+[Unveröffentlicht]: https://github.com/tobiasHaecker/procworks/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tobiasHaecker/procworks/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/tobiasHaecker/procworks/releases/tag/v0.1.0

@@ -49,7 +49,8 @@ Richtlinien:
 - **[Conventional Commits](https://www.conventionalcommits.org/)**, z. B.
   `feat: parallelInsert für verschachtelte Blöcke`, `fix: …`, `docs: …`,
   `test: …`, `refactor: …`, `chore: …`.
-- **[Semantic Versioning](https://semver.org/)** für Releases.
+- **[Semantic Versioning](https://semver.org/)** für Releases (siehe
+  [Releases & Versionierung](#releases--versionierung)).
 - Arbeite auf einem Feature-Branch und stelle einen Pull Request gegen `main`.
 
 ## Pull Requests
@@ -58,6 +59,45 @@ Richtlinien:
 2. Beschreibe **Was** und **Warum**; verlinke zugehörige Issues.
 3. Stelle sicher, dass CI grün ist (Lint, Typen, Tests).
 4. Aktualisiere Doku/`CHANGELOG`, wenn sich Verhalten oder API ändern.
+
+## Releases & Versionierung
+
+`main` ist immer integrierbar: Jeder Push/PR durchläuft die CI (Lint, Typen,
+Tests, Lizenz-Scan). Das ist **Continuous Integration** — noch **kein** Release.
+
+Ein **Release** ist ein annotierter Tag `vX.Y.Z` auf `main`. Sein Push startet
+den Workflow [`release.yml`](.github/workflows/release.yml), der die **API-** und
+**Web-Container-Images** baut, mit **Trivy** (CRITICAL/HIGH) scannt und nach
+**ghcr.io** veröffentlicht (Image-Tags `X.Y.Z`, `X.Y`, `sha`). Ein Release ist
+damit ein fixierter, gescannter, reproduzierbar auslieferbarer Stand.
+
+### Wann taggen?
+
+Getaggt wird ein **kohärenter, dokumentierter, grüner** Stand, der ausgeliefert
+werden soll (ein abgeschlossenes Feature-/Fix-Bündel mit aktuellem `CHANGELOG`) —
+nicht jeder einzelne Commit.
+
+Versionssprung nach [SemVer](https://semver.org/lang/de/) (Vorabphase `0.y.z`):
+
+| Erhöhung | Wofür |
+| --- | --- |
+| **PATCH** (`0.y.Z`) | nur Bugfixes, Sicherheits-Patches, Doku — keine neuen Endpunkte/Felder. |
+| **MINOR** (`0.Y.0`) | neue Funktionen/Endpunkte, additive Modelländerungen. Brechende Änderungen sind vor `1.0.0` erlaubt, müssen aber im `CHANGELOG` als **BREAKING** ausgewiesen werden. |
+| **MAJOR** (`X.0.0`) | ab `1.0.0` für jede brechende Änderung. |
+
+### Release-Checkliste
+
+1. `CHANGELOG.md`: Abschnitt `[Unveröffentlicht]` zu `[X.Y.Z] - YYYY-MM-DD`
+   schließen, neuen leeren `[Unveröffentlicht]`-Block anlegen, Vergleichslinks
+   unten pflegen.
+2. Version anheben (muss dem Tag ohne `v` entsprechen): `core/pyproject.toml`
+   sowie `deploy/helm/Chart.yaml` (`version` **und** `appVersion`).
+3. Gates lokal grün (`ruff check .`, `mypy src`, `pytest -q` in `core/`).
+4. Release-Commit `chore(release): vX.Y.Z`.
+5. Annotierten Tag setzen und mitschieben:
+   `git tag -a vX.Y.Z -m "vX.Y.Z"` und `git push origin main --follow-tags`.
+6. Workflow **Release** prüfen (Trivy grün, Images in ghcr.io). Anschließend
+   die GitHub-Release-Notes aus dem passenden `CHANGELOG`-Abschnitt erzeugen.
 
 ## Sicherheitslücken
 
