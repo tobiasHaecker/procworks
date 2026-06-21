@@ -1719,7 +1719,15 @@ function showLoginOverlay() {
     errBox,
     el("button", { class: "btn primary", type: "submit" }, "Anmelden"));
   const card = el("div", { class: "auth-card" },
-    authBrand("Bitte melden Sie sich an."), form);
+    authBrand("Bitte melden Sie sich an."), form,
+    el("p", { class: "auth-disclaimer" },
+      "Nutzung auf eigenes Risiko. ProcWorks wird ohne jede Gewährleistung und ",
+      "ohne jede Haftung bereitgestellt – für keinerlei Schäden an Systemen, ",
+      "Daten oder Prozessen. ",
+      el("a", {
+        href: "https://github.com/tobiasHaecker/procworks/blob/main/DISCLAIMER.md",
+        target: "_blank", rel: "noopener",
+      }, "Haftungsausschluss")));
   showOverlay(card);
   setTimeout(() => loginInput.focus(), 0);
 }

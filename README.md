@@ -26,6 +26,17 @@ Das vollständige Architektur-Konzept liegt in
 
 ## Schnellstart: In 15 Minuten einsatzbereit
 
+> ⚠️ **Haftungsausschluss – bitte vor der Inbetriebnahme lesen.** ProcWorks wird
+> **„wie besehen", ohne jede Gewährleistung und ohne jede Haftung**
+> bereitgestellt. Inbetriebnahme und Nutzung erfolgen **ausschließlich auf
+> eigenes Risiko**. Wir haften – im größtmöglichen gesetzlich zulässigen Umfang –
+> **für keinerlei Schäden**, weder im Zusammenhang mit der **Inbetriebnahme**
+> (z. B. an Servern, Hardware, Betriebssystemen, paralleler/Drittsoftware,
+> Netzwerken oder Infrastruktur) noch mit der **Nutzung** (z. B. Verlust oder
+> Beschädigung von Daten und fehlerhafte Geschäftsprozesse). Prüfen Sie das
+> Werkzeug zuerst in einer **isolierten Testumgebung** und legen Sie **Backups**
+> an. Vollständiger Text: [DISCLAIMER.md](DISCLAIMER.md).
+
 > Für mittelständische Unternehmen **ohne eigene IT-Abteilung**. Sie brauchen
 > kein Vorwissen – nur einen Rechner mit Internet. ProcWorks startet als ein
 > einziger, in sich geschlossener Container-Verbund (Datenbank + Server +
@@ -292,5 +303,22 @@ jede betroffene Version automatisch in **Apache-2.0** über. Siehe
 [LICENSE](LICENSE).
 
 Für kommerzielle Lizenzen wende dich an den Lizenzgeber.
+
+### Haftungsausschluss
+
+ProcWorks wird **„wie besehen" (as is)**, **ohne jede Gewährleistung** und
+**ohne jede Haftung** bereitgestellt. Bezug, Installation, Inbetriebnahme und
+Nutzung erfolgen **ausschließlich auf eigenes Risiko und in eigener
+Verantwortung**. Im größtmöglichen gesetzlich zulässigen Umfang übernehmen wir
+**keine Haftung für irgendeinen Schaden** – weder im Zusammenhang mit der
+**Inbetriebnahme** (z. B. Schäden an Servern, Hardware, Betriebssystemen,
+paralleler oder Drittsoftware, Netzwerken oder sonstiger Infrastruktur) noch mit
+der **Nutzung** (z. B. Verlust, Beschädigung oder Offenlegung von Daten,
+fehlerhafte, verzögerte oder unterbrochene Geschäftsprozesse, Betriebs- oder
+Vermögensschäden). Dies ergänzt den Gewährleistungs-/Haftungsausschluss der
+Lizenz (BUSL-1.1, Abschnitt 8). Zwingende gesetzliche Haftung (insbesondere bei
+Vorsatz, grober Fahrlässigkeit, Verletzung von Leben/Körper/Gesundheit sowie nach
+dem Produkthaftungsgesetz) bleibt unberührt. Vollständiger Text:
+[DISCLAIMER.md](DISCLAIMER.md).
 
 © 2026 Tobias Häcker – alle Rechte vorbehalten.

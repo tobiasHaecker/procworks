@@ -649,3 +649,13 @@ docker compose -f deploy/docker-compose.full.yml up --build
 ## Lizenz
 
 Business Source License 1.1 (BUSL-1.1) — siehe [../LICENSE](../LICENSE).
+
+## Haftungsausschluss
+
+ProcWorks wird **„wie besehen", ohne jede Gewährleistung und ohne jede Haftung**
+bereitgestellt. Inbetriebnahme (z. B. an Servern, Betriebssystemen, paralleler
+oder Drittsoftware, Netzwerken/Infrastruktur) und Nutzung (z. B. Daten und
+Geschäftsprozesse) erfolgen ausschließlich auf eigenes Risiko und in eigener
+Verantwortung. Im größtmöglichen gesetzlich zulässigen Umfang ist jede Haftung
+für Schäden ausgeschlossen; zwingende gesetzliche Haftung bleibt unberührt.
+Vollständiger Text: [../DISCLAIMER.md](../DISCLAIMER.md).

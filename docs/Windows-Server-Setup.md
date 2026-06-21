@@ -8,6 +8,18 @@ ProcWorks läuft als Container-Verbund (PostgreSQL + API + Web/Reverse-Proxy).
 Der einfachste Weg auf Windows ist **Docker Desktop mit WSL2** zusammen mit der
 mitgelieferten Compose-Datei [`deploy/docker-compose.full.yml`](../deploy/docker-compose.full.yml).
 
+> ⚠️ **Haftungsausschluss – vor der Installation lesen.** ProcWorks wird **„wie
+> besehen", ohne jede Gewährleistung und ohne jede Haftung** bereitgestellt.
+> Installation, Inbetriebnahme und Betrieb erfolgen **ausschließlich auf eigenes
+> Risiko und in eigener Verantwortung**. Im größtmöglichen gesetzlich zulässigen
+> Umfang wird **keine Haftung** übernommen – weder für Schäden am Server, an
+> Betriebssystem, paralleler oder anderer Software, Netzwerken oder Infrastruktur
+> (Inbetriebnahme) noch für Verlust/Beschädigung von Daten oder fehlerhafte
+> Geschäftsprozesse (Nutzung). Setzen Sie ProcWorks **nicht** ungeprüft auf einem
+> produktiven Server ein: Verwenden Sie eine **isolierte Umgebung** bzw. einen
+> dedizierten Server, legen Sie **Backups** an und sichern Sie den Zugang ab. Der
+> vollständige Text steht in [DISCLAIMER.md](../DISCLAIMER.md).
+
 > Empfohlen: **Windows Server 2022** (oder neuer) mit Internetzugang und
 > Administratorrechten. Mindestens 2 CPU-Kerne, 4 GB RAM, 20 GB freier
 > Speicher.

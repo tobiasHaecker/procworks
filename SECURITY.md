@@ -78,3 +78,18 @@ Auth-Konzept Variante C). Hinweise für den produktiven Betrieb:
   verifizierten `Principal` abgeleitet, niemals aus dem Request-Body
   (Impersonation-Schutz). Die feingranulare BZR-Eignungsprüfung im Kern bleibt
   als zusätzliche Schutzschicht aktiv.
+
+## Haftungsausschluss
+
+Diese Sicherheitsrichtlinie beschreibt Schutzmaßnahmen und Meldewege, begründet
+aber **keine** Gewährleistung und **keine** Haftung. ProcWorks wird **„wie
+besehen", ohne jede Gewährleistung und ohne jede Haftung** bereitgestellt;
+Inbetriebnahme und Betrieb erfolgen ausschließlich auf eigenes Risiko und in
+eigener Verantwortung. Im größtmöglichen gesetzlich zulässigen Umfang
+übernehmen wir keine Haftung für Schäden an Servern, Hardware, Betriebssystemen,
+paralleler oder Drittsoftware, Netzwerken oder Infrastruktur (Inbetriebnahme)
+noch für Verlust, Beschädigung oder Offenlegung von Daten oder fehlerhafte
+Geschäftsprozesse (Nutzung) – auch nicht infolge von Sicherheitslücken,
+Fehlkonfigurationen oder des Betriebs im offenen Entwicklungsmodus. Die
+Verantwortung für sichere Konfiguration, Backups und den Schutz der eigenen
+Systeme liegt beim Betreiber. Vollständiger Text: [DISCLAIMER.md](DISCLAIMER.md).

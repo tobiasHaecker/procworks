@@ -7,6 +7,12 @@ zwei Teilen:
 - **Teil A** – Was der Administrator **einmalig** vorbereitet (Voraussetzungen).
 - **Teil B** – Die **fertige Anleitung zum Weitergeben** an den Mitarbeiter.
 
+> ⚠️ **Hinweis zur Haftung.** ProcWorks wird ohne jede Gewährleistung und – soweit
+> gesetzlich zulässig – **ohne jede Haftung** bereitgestellt; die Nutzung erfolgt
+> auf eigenes Risiko. Fachliche Ergebnisse, Entscheidungen und Daten liegen in der
+> Verantwortung des Betreibers und der Anwender. Details:
+> [DISCLAIMER.md](../DISCLAIMER.md).
+
 ---
 
 ## Teil A: Voraussetzungen (durch den Administrator)

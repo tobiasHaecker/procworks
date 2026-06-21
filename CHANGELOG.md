@@ -9,6 +9,17 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Rechtssicherer Haftungsausschluss zentral verankert**: Neue, zweisprachige
+  [`DISCLAIMER.md`](DISCLAIMER.md) (deutsch maßgeblich, englische Zusammenfassung)
+  schließt – soweit gesetzlich zulässig – jede Haftung sowohl für die
+  **Inbetriebnahme/den Betrieb** (Schäden an Servern, Betriebssystem, paralleler
+  oder anderer Software, Netzwerken, Infrastruktur) als auch für die **Nutzung**
+  (Datenverlust/-beschädigung, fehlerhafte Prozesse, Betriebsunterbrechung) aus;
+  mit salvatorischer Klausel für gesetzlich zwingende Haftung (u. a. Leben/Körper/
+  Gesundheit, Vorsatz/grobe Fahrlässigkeit, ProdHaftG). Verankert in
+  `README.md`, `SECURITY.md`, `core/README.md`, der Landingpage (`site/`), dem
+  Web-Client (Login-Overlay und Fußzeile) sowie den Anleitungen
+  `docs/Windows-Server-Setup.md` und `docs/Mitarbeiter-Anleitung.md`.
 - **Live-Aktualisierung der Laufzeit-Sichten**: Wird der Fortschritt einer
   Aktivität/Instanz aktualisiert (z. B. eine Aufgabe von einem anderen Nutzer
   abgeschlossen), aktualisieren sich die **Aufgabenlisten**, die **Ausführen**-

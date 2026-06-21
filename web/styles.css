@@ -242,4 +242,6 @@ svg.graph { display: block; min-width: 100%; }
 .auth-card form { display: flex; flex-direction: column; gap: 12px; }
 .auth-card .auth-hint { font-size: 12px; color: var(--txt-dim); line-height: 1.5; }
 .auth-card .auth-err { font-size: 13px; color: var(--red); min-height: 1em; }
+.auth-card .auth-disclaimer { font-size: 11px; color: var(--txt-dim); line-height: 1.5; margin: 4px 0 0; }
+.side-foot .disclaimer-foot { font-size: 10px; opacity: .85; }
 
