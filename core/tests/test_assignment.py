@@ -20,6 +20,7 @@ from procworks import (
     create_empty_schema,
     eligible_agents,
     instantiate,
+    new_revision,
     open_tasks,
     release,
     serial_insert,
@@ -188,6 +189,29 @@ def test_open_tasks_lists_activated_activity_with_rule():
     assert len(tasks) == 1
     assert tasks[0].node_id == act
     assert tasks[0].eligible_agents == ["a1"]
+    # The task carries the schema id and its revision (version) so worklists can
+    # show which revision a task belongs to.
+    assert tasks[0].schema_id == instance.schema_id
+    assert tasks[0].schema_version == rel.version == 1
+
+
+def test_open_tasks_carry_revision_version():
+    # A revision keeps the same name but gets a fresh id and an incremented
+    # version; its open tasks must report that revision's version (here 2).
+    schema = _single_activity_schema("asgrev")
+    act = _activity_id(schema, "Bearbeiten")
+    schema = add_role(schema, "Sachbearbeiter", role_id="sb")
+    schema = add_agent(schema, "Erika", role_ids=["sb"], agent_id="a1")
+    schema = assign_staff_rule(schema, act, _role_rule("sb"))
+    rel_v1 = release(schema)
+    rev_v2 = release(new_revision(rel_v1))
+    assert rev_v2.version == 2
+
+    instance = instantiate(rev_v2)
+    tasks = open_tasks(rev_v2, instance)
+    assert len(tasks) == 1
+    assert tasks[0].schema_version == 2
+    assert tasks[0].schema_id == instance.schema_id
 
 
 def test_open_tasks_empty_when_no_rule():

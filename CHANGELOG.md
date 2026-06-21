@@ -9,6 +9,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Revision in der Schema-Benennung sichtbar**: Revisionen eines Modells (gleicher
+  Name, eigene ID, hochgezählte Version) erschienen in der **Modellauswahl** bisher
+  ununterscheidbar nebeneinander. Sie tragen jetzt überall die Revision in der
+  Benennung (z. B. „Urlaubsantrag (v2)“):
+  - in der **Modellauswahl** (Schema-Picker oben),
+  - im **Monitoring** in der Spalte *Schema* der aktiven Instanzen,
+  - in der **Aufgaben**-Sicht in der Spalte *Prozess*.
+  - Die Aufgaben-Endpunkte (`GET /me/tasks`, `GET /agents/{id}/tasks`,
+    `GET /instances/{id}/tasks`) liefern dafür additiv das neue Feld
+    `schema_version` je Aufgabe; die Instanz führt ihre `schema_version` bereits.
+    Rein additiv – kein bestehendes Verhalten geändert, kein Korrektheitskriterium
+    berührt.
 - **Rechtssicherer Haftungsausschluss zentral verankert**: Neue, zweisprachige
   [`DISCLAIMER.md`](DISCLAIMER.md) (deutsch maßgeblich, englische Zusammenfassung)
   schließt – soweit gesetzlich zulässig – jede Haftung sowohl für die

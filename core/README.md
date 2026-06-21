@@ -429,7 +429,7 @@ Schritt tatsächlich ausgeführt hat (`instance.performed_by`), und `AND`/`OR`/
 transitive Vertreterkette erweitert.
 
 ```text
-GET  /instances/{iid}/tasks         -> [ { node_id, label, eligible_agents: [...] } ]
+GET  /instances/{iid}/tasks         -> [ { schema_id, schema_version, node_id, label, eligible_agents: [...] } ]
 GET  /agents/{agent_id}/tasks       -> offene Aufgaben dieser Person (inkl. Vertretung)
 POST /instances/{iid}/complete      { "node_id": "<act>", "agent_id": "a1", "data": {...} }
 ```

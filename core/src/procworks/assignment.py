@@ -48,6 +48,10 @@ class OpenTask(BaseModel):
 
     instance_id: str
     schema_id: str
+    #: Version (revision) of the schema this instance runs against. Carried so
+    #: worklists can show which revision a task belongs to (revisions share the
+    #: same ``name`` but get a fresh ``schema_id`` and an incremented version).
+    schema_version: int = 1
     node_id: str
     label: str
     eligible_agents: list[str]
@@ -98,6 +102,7 @@ def open_tasks(schema: ProcessSchema, instance: ProcessInstance) -> list[OpenTas
             OpenTask(
                 instance_id=instance.id,
                 schema_id=instance.schema_id,
+                schema_version=instance.schema_version,
                 node_id=node_id,
                 label=node.label or node_id,
                 eligible_agents=sorted(eligible_agents(schema, node_id, instance)),

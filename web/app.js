@@ -43,6 +43,9 @@ const state = {
   view: localStorage.getItem("view") || "model",
   schemaIds: [],
   schemaNames: {},
+  // Version (revision) per schema id, captured alongside the name. Immutable
+  // per id (a new revision gets a fresh id), so it is safe to cache.
+  schemaVersions: {},
   schemaId: localStorage.getItem("schemaId") || null,
   schema: null,
   validation: null,
@@ -337,15 +340,21 @@ function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + "\u2026" : s
 
 async function loadSchemas() {
   state.schemaIds = await api.get("/schemas");
-  // The list endpoint returns only IDs; fetch each name once so the picker can
-  // show the human-readable schema name instead of the raw ID (e.g. schema_1).
+  // The list endpoint returns only IDs; fetch each name + version once so the
+  // picker can show the human-readable schema name plus its revision (e.g.
+  // "Urlaubsantrag (v2)") instead of the raw ID. Revisions share the same name
+  // but carry a fresh ID and an incremented version, so the version makes them
+  // distinguishable in the selection.
   const unknown = state.schemaIds.filter((id) => !(id in state.schemaNames));
   if (unknown.length) {
     const entries = await Promise.all(unknown.map(async (id) => {
-      try { const s = await api.get(`/schemas/${id}`); return [id, s.name]; }
-      catch (_e) { return [id, id]; }
+      try { const s = await api.get(`/schemas/${id}`); return [id, s.name, s.version]; }
+      catch (_e) { return [id, id, null]; }
     }));
-    for (const [id, name] of entries) state.schemaNames[id] = name;
+    for (const [id, name, version] of entries) {
+      state.schemaNames[id] = name;
+      if (version != null) state.schemaVersions[id] = version;
+    }
   }
   if (state.schemaIds.length && !state.schemaIds.includes(state.schemaId)) {
     state.schemaId = state.schemaIds[0];
@@ -382,12 +391,24 @@ function lifecyclePill(schema) {
 // Topbar / Schema-Picker
 // --------------------------------------------------------------------------
 
+// Human-readable schema caption including its revision, e.g. "Urlaubsantrag
+// (v2)". Revisions share the same name but get a fresh id and an incremented
+// version, so the version is what makes them distinguishable. ``version`` may
+// be passed explicitly (e.g. an instance's own schema_version, which is robust
+// even when the schema is no longer in the picker); otherwise it falls back to
+// the cached version for that id. The id is used as a last resort.
+function schemaLabel(id, version) {
+  const name = state.schemaNames[id] || id;
+  const v = version != null ? version : state.schemaVersions[id];
+  return v != null ? `${name} (v${v})` : name;
+}
+
 function renderSchemaPicker() {
   const picker = byId("schema-picker");
   clear(picker);
   const select = el("select", { onChange: (e) => selectSchema(e.target.value) },
     ...state.schemaIds.map((id) => {
-      const o = el("option", { value: id }, state.schemaNames[id] || id);
+      const o = el("option", { value: id }, schemaLabel(id));
       if (id === state.schemaId) o.selected = true;
       return o;
     }));
@@ -1362,7 +1383,7 @@ async function viewMonitor() {
     const total = Object.keys(i.node_states || {}).length || 1;
     const completed = Object.values(i.node_states || {}).filter((s) => s === "COMPLETED" || s === "SKIPPED").length;
     const pct = Math.round((completed / total) * 100);
-    return { i, cells: [i.id, i.schema_id, statePillFor(i.state), `${pct}%`] };
+    return { i, cells: [i.id, schemaLabel(i.schema_id, i.schema_version), statePillFor(i.state), `${pct}%`] };
   });
 
   const tbl = el("table", null,
@@ -1553,7 +1574,7 @@ async function viewTasks() {
     const rows = tasks.map((t) => {
       const elig = (t.eligible_agents || []).map(agentNameOf).join(", ");
       const btn = el("button", { class: "btn small green", onClick: () => completeTask(t, agentId) }, "Erledigen");
-      return [t.label || t.node_id, t.schema_id, elig, btn];
+      return [t.label || t.node_id, schemaLabel(t.schema_id, t.schema_version), elig, btn];
     });
     body.appendChild(table(["Aufgabe", "Prozess", "Berechtigte", ""], rows));
   }

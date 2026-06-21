@@ -665,6 +665,10 @@ def test_agent_tasks_via_api() -> None:
     assert resp.status_code == 200
     tasks = resp.json()
     assert any(t["instance_id"] == iid and t["node_id"] == act_id for t in tasks)
+    # Each task reports the schema revision (version) it belongs to so the
+    # worklist can show it next to the process name.
+    task = next(t for t in tasks if t["instance_id"] == iid and t["node_id"] == act_id)
+    assert task["schema_version"] == 1
 
     resp_inst = client.get(f"/instances/{iid}/tasks")
     assert resp_inst.status_code == 200
