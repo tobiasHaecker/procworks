@@ -39,3 +39,8 @@ Thumbs.db
 *.pdf
 *.extracted.txt
 *.extract.txt
+
+# Vertrauliche, NICHT zu veröffentlichende Interna (rechtliche Recherchen,
+# FTO-/Patentanalysen, Strategie-Notizen). Bleibt ausschließlich lokal.
+private/
+
