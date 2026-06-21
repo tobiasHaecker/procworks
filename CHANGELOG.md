@@ -9,6 +9,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Kontrollfluss-Canvas verschieb- und zoombar**: Die Kontrollflussansicht in
+  **Modellieren** sowie die **Live-Prozesslandkarte** in **Ausführung** und
+  **Monitoring** lassen sich jetzt frei bedienen:
+  - **Verschieben (Pan)** per Ziehen mit der Maus in alle Richtungen (kein
+    Festhängen mehr an den Scroll-Achsen).
+  - **Zoomen** per Mausrad – stets **zur aktuellen Zeigerposition hin bzw. von
+    ihr weg** (der Punkt unter dem Cursor bleibt fixiert), begrenzt auf 0,2×–4×.
+  - Eine dezente Bedienhilfe („Mausrad: Zoom · Ziehen: Verschieben“) blendet sich
+    in der Canvas-Ecke ein. Klicks auf Knoten und „+“-Operationen bleiben
+    erhalten (ein abschließender Drag löst keine versehentliche Auswahl aus).
+  - Rein visuell im Web-Client – keine Modell-, Kern- oder API-Änderung; der
+    Pan/Zoom-Zustand setzt sich beim Neu-Rendern zurück.
 - **Revision in der Schema-Benennung sichtbar**: Revisionen eines Modells (gleicher
   Name, eigene ID, hochgezählte Version) erschienen in der **Modellauswahl** bisher
   ununterscheidbar nebeneinander. Sie tragen jetzt überall die Revision in der

@@ -329,11 +329,90 @@ function renderGraph(schema, opts) {
     root.appendChild(g);
   });
 
-  return el("div", { class: "canvas-wrap" }, root);
+  const wrap = el("div", { class: "canvas-wrap" }, root,
+    el("div", { class: "canvas-hint" }, "Mausrad: Zoom \u00B7 Ziehen: Verschieben"));
+  attachPanZoom(wrap, root);
+  return wrap;
+}
+
+// Make a rendered graph canvas pannable (drag in any direction) and zoomable
+// (mouse wheel, anchored to the pointer position). Pan/zoom is purely visual
+// (a CSS transform on the SVG) and resets on the next render -- it never
+// touches the model or any backend state. The controller is exposed on
+// ``wrap._panzoom`` so ``centerCanvasOnNode`` can re-centre the selected node.
+function attachPanZoom(wrap, svgEl) {
+  const MIN = 0.2, MAX = 4;
+  let scale = 1, tx = 0, ty = 0;
+
+  function apply() {
+    svgEl.style.transformOrigin = "0 0";
+    svgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  }
+  apply();
+
+  // Wheel = zoom towards / away from the pointer: keep the model point under
+  // the cursor fixed while the scale changes.
+  wrap.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = wrap.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const cx = (px - tx) / scale, cy = (py - ty) / scale;
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const next = Math.min(MAX, Math.max(MIN, scale * factor));
+    if (next === scale) return;
+    scale = next;
+    tx = px - cx * scale;
+    ty = py - cy * scale;
+    apply();
+  }, { passive: false });
+
+  // Drag = pan. Only capture the pointer once movement passes a small
+  // threshold so a plain click still selects a node / hits a "+" handle.
+  let down = false, dragging = false, sx = 0, sy = 0, lastX = 0, lastY = 0;
+  wrap.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    down = true; dragging = false;
+    sx = lastX = e.clientX; sy = lastY = e.clientY;
+  });
+  wrap.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    if (!dragging && Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) < 4) return;
+    if (!dragging) {
+      dragging = true;
+      wrap.classList.add("grabbing");
+      try { wrap.setPointerCapture(e.pointerId); } catch (_e) { /* ignore */ }
+    }
+    tx += e.clientX - lastX; ty += e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    apply();
+  });
+  function endDrag(e) {
+    if (!down) return;
+    down = false;
+    if (dragging) {
+      wrap.classList.remove("grabbing");
+      try { wrap.releasePointerCapture(e.pointerId); } catch (_e) { /* ignore */ }
+    }
+  }
+  wrap.addEventListener("pointerup", endDrag);
+  wrap.addEventListener("pointercancel", endDrag);
+  // Swallow the click that trails a real drag so panning never selects a node.
+  wrap.addEventListener("click", (e) => {
+    if (dragging) { e.stopPropagation(); e.preventDefault(); }
+    dragging = false;
+  }, true);
+
+  wrap._panzoom = {
+    centerOn(pos) {
+      const cx = pos.x + pos.w / 2, cy = pos.y + pos.h / 2;
+      tx = wrap.clientWidth / 2 - cx * scale;
+      ty = wrap.clientHeight / 2 - cy * scale;
+      apply();
+    },
+  };
 }
 
 function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
-
 // --------------------------------------------------------------------------
 // Laden / Auswahl
 // --------------------------------------------------------------------------
@@ -503,12 +582,10 @@ function viewModel() {
 }
 
 function centerCanvasOnNode(wrap, pos) {
-  // ``wrap`` ist die scrollbare .canvas-wrap; die Layout-Koordinaten bilden im
-  // Ueberlauf-Fall 1:1 auf Pixel ab (SVG-Breite == Layout-Breite).
-  const cx = pos.x + pos.w / 2;
-  const cy = pos.y + pos.h / 2;
-  wrap.scrollLeft = Math.max(0, cx - wrap.clientWidth / 2);
-  wrap.scrollTop = Math.max(0, cy - wrap.clientHeight / 2);
+  // ``wrap`` ist die .canvas-wrap; der Pan/Zoom-Controller verschiebt den
+  // Knoten ueber eine CSS-Transformation in die Mitte des Viewports (statt
+  // ueber nativen Scroll, der durch overflow:hidden entfaellt).
+  if (wrap && wrap._panzoom) wrap._panzoom.centerOn(pos);
 }
 
 // --------------------------------------------------------------------------

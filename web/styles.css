@@ -136,8 +136,22 @@ tr.clickable:hover td { background: var(--bg-elev2); }
 .empty { color: var(--txt-dim); padding: 24px; text-align: center; font-size: 13px; }
 
 /* ---- Graph ---- */
-.canvas-wrap { overflow: auto; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--line); }
-svg.graph { display: block; min-width: 100%; }
+.canvas-wrap {
+  position: relative;
+  overflow: hidden;
+  height: clamp(320px, 55vh, 640px);
+  background: var(--bg); border-radius: var(--radius); border: 1px solid var(--line);
+  cursor: grab; touch-action: none;
+}
+.canvas-wrap.grabbing { cursor: grabbing; }
+.canvas-hint {
+  position: absolute; right: 10px; bottom: 8px; z-index: 2;
+  font-size: 11px; color: var(--txt-dim);
+  background: var(--bg-elev2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 8px; opacity: .85;
+  pointer-events: none; user-select: none;
+}
+svg.graph { display: block; min-width: 100%; user-select: none; transform-origin: 0 0; }
 .gnode rect { stroke-width: 1.5px; }
 .gnode text { font-size: 12px; fill: var(--txt); }
 .gnode .glabel { font-weight: 600; }
