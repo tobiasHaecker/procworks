@@ -133,6 +133,8 @@ th { color: var(--txt-dim); font-weight: 600; font-size: 12px; text-transform: u
 tr:last-child td { border-bottom: 0; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--bg-elev2); }
+tr.clickable.selected td { background: var(--accent-soft); color: #fff; }
+tr.clickable.selected:hover td { background: var(--accent-soft); }
 .empty { color: var(--txt-dim); padding: 24px; text-align: center; font-size: 13px; }
 
 /* ---- Graph ---- */

@@ -9,6 +9,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Ausgewählte Instanz im Monitoring hervorgehoben**: Beim Klick auf eine aktive
+  Instanz in der Tabelle *Aktive Instanzen* (Monitoring) wird die zugehörige Zeile
+  jetzt **farblich hervorgehoben**, solange ihr Detail unten geöffnet ist – so ist
+  jederzeit ersichtlich, welche Instanz gerade betrachtet wird. Rein visuell im
+  Web-Client, keine Modell-, Kern- oder API-Änderung.
 - **Kontrollfluss-Canvas verschieb- und zoombar**: Die Kontrollflussansicht in
   **Modellieren** sowie die **Live-Prozesslandkarte** in **Ausführung** und
   **Monitoring** lassen sich jetzt frei bedienen:

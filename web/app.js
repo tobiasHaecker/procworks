@@ -1466,7 +1466,7 @@ async function viewMonitor() {
   const tbl = el("table", null,
     el("thead", null, el("tr", null, ...["Instanz", "Schema", "Status", "Fortschritt"].map((h) => el("th", null, h)))),
     el("tbody", null, ...(rows.length ? rows.map((r) =>
-      el("tr", { class: "clickable", onClick: () => openInstanceFromMonitor(r.i.id) }, ...r.cells.map((c) => el("td", null, c))))
+      el("tr", { class: r.i.id === state.instanceId ? "clickable selected" : "clickable", onClick: () => openInstanceFromMonitor(r.i.id) }, ...r.cells.map((c) => el("td", null, c))))
       : [el("tr", null, el("td", { colspan: 4 }, emptyState("Keine Instanzen. Starte eine in der Ausf\u00FChrungs-Sicht.")))])));
 
   content.appendChild(el("div", { class: "panel" },
