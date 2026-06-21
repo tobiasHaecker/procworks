@@ -9,6 +9,188 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Integrationsschicht Phase P6 – HTTP-Push für Aktivitäten & Integrations-Dokumentation (Konzept §6.3)**:
+  Die **Push-Seite** der ausgehenden Anbindung – ProcWorks ruft bei Aktivierung
+  einer automatischen Aktivität aktiv ein konfiguriertes Tool-Endpoint auf
+  (komplementär zum bestehenden External-Task-*Pull*).
+  - **Push-Endpoint-Registry** (`outbox.py`): `PushEndpointRegistry` löst eine
+    logische `endpoint_ref` aus dem Service-Binding serverseitig zu URL +
+    Signatur-Secret auf (`build_push_endpoint_registry()` liest
+    `PROCWORKS_PUSH_ENDPOINTS`, Dateipfad oder Inline-JSON). URLs und Secrets
+    stehen **nie** im Schema; `GET /v1/push-endpoints` listet nur die Referenzen.
+  - **Subskriptionslose Outbox-Zustellung** (`OutboxDispatcher.push`): nutzt die
+    volle Outbox-Maschinerie (durable Queue, HMAC-Signatur, Back-off-Retry,
+    Circuit-Breaker, Delivery-Log) für vertrauenswürdige, vom Betreiber
+    konfigurierte Ziele (SSRF-Prüfung auf Schema + Host, interne Hosts erlaubt).
+    Additives Modellfeld `OutboxEntry.secret_ref`.
+  - **Push-Treiber** (`ExternalTaskRuntime.drive_push`): materialisiert je
+    aktiviertem `HTTP_PUSH`-Schritt eine Aufgabe und pusht ihr Eingabe-Datenpaket
+    inklusive **Callback-Token** an das Ziel. Die Aufgabe wird `LOCKED` (ohne
+    Lock-Ablauf, ohne Topic) – das Tool quittiert und meldet das Ergebnis später
+    über den **regulären** `POST /v1/external-tasks/{id}/complete`-Endpunkt
+    zurück (asynchrone Variante; die synchrone Variante bleibt bewusst
+    aufgeschoben, weil sie den Kern an die Zustellung koppeln würde).
+  - **Best-Effort & stabil**: der Push wird nach jedem Engine-Fortschritt
+    angestoßen, schlägt er fehl, bleibt die Aufgabe `CREATED` und wird später
+    erneut gepusht – der Prozess wird **nie** blockiert oder beschädigt.
+    `POST /v1/external-tasks/drive-push` stößt einen Drive manuell an
+    (z. B. Re-Push nach Backoff; operator/admin).
+  - **Dokumentation**: neuer [Integrations-Leitfaden](docs/Integrations-Leitfaden.md)
+    (Rezepte für Inbound, External-Task-Pull, HTTP-Push, Webhooks, Connectoren,
+    Auth/Scopes, Idempotenz + Endpunkt-Referenz); OpenAPI unter `/docs`.
+  - Rein additiv, Boundary-only; der Kern bleibt rein. 467 Tests grün
+    (+22 neue in `tests/test_http_push.py`).
+- **Integrationsschicht Phase P5 – GUI-Integrationssicht (Konzept §11)**:
+  Neue **Integrations-Sicht** im No-Build-Web-Client (`web/`), die ausschließlich
+  geprüfte Endpunkte aufruft (keine Korrektheitslogik im Client).
+  - **Connector-Registry** (§11.1): Liste der serverseitig konfigurierten
+    Connectoren mit Typ-Badge und Status (verbunden/Fehler/ungeprüft),
+    „Verbindung testen" (`/v1/connectors/{id}/test`) und „Testlesen"
+    (`/v1/connectors/{id}/sample-read`). Zugangsdaten werden nie angezeigt.
+  - **Datenanbindungs-Assistent** (§11.2): Modell-Connectoren registrieren und
+    Datenelemente extern an Connector-Entitäten binden (Schlüssel-Datenelement),
+    live gegen die Connector-Regeln C1–C3 geprüft.
+  - **Automatik-Schritt-Binding** (§11.3): Umschalter „Person / Automatisch"
+    pro Aktivität (External-Task-Topic oder HTTP-Push-Ziel) samt einklappbarer
+    Robustheits-Parameter (Versuche/Backoff/Timeout) über `…/automation`.
+  - **Webhook-/Ereignis-Panel** (§11.4): Abonnements anlegen (URL gegen
+    Allowlist, Ereignisse als Checkboxen, Secret-Referenz), „Testzustellung"
+    und Zustellprotokoll einsehen, Abonnement löschen.
+  - **Inzident-Liste** (§11.5) in der Monitoring-Sicht: offene Inzidente
+    externer Aufgaben mit „Erneut versuchen" (Auflösen + Wiedereinreihen) für
+    Bearbeiter/Administratoren.
+  - Rein additiv, nur Web-Client (`app.js`/`index.html`/`styles.css`); der Kern
+    und die API bleiben unverändert (445 Tests weiterhin grün).
+- **Integrationsschicht Phase P4 – Webhooks & transaktionaler Outbox (E13, Konzept §6.3)**:
+  Die **Event-Seite** der maximal offenen API – Fremd-Tools abonnieren
+  Domänen-Ereignisse und erhalten sie als signierte HTTP-POSTs.
+  - **Transaktionaler Outbox-Dispatcher** (`outbox.py`, neu): `OutboxDispatcher`
+    reiht ein Ereignis je aktivem, passendem Abo in den **Outbox** ein (vor der
+    Zustellung persistiert – kein Verlust bei Absturz) und stellt es danach zu.
+    Eigenschaften: **At-least-once + Idempotenz** (eindeutige `delivery_id` je
+    Zustellung), **HMAC-SHA256-Signatur** (`X-ProcWorks-Signature`, Secret aus
+    dem serverseitigen Secret-Store – nie inline), **Back-off-Retry** mit
+    Dead-Letter (`OutboxEntry`-Zustand `DEAD` nach erschöpftem Budget),
+    **Circuit-Breaker** je Ziel-Host und **Delivery-Log** (`WebhookDelivery`).
+  - **SSRF-Allowlist (Regel I6)**: eine Abo-URL wird vor Speichern und Aufruf
+    geprüft – nur `http`/`https`, Host gegen `PROCWORKS_WEBHOOK_ALLOWLIST` bzw.
+    Sperre interner/loopback/link-local-Adressen ohne Allowlist.
+  - **Event-Quelle**: der External-Task-Treiber meldet `task.ready` /
+    `task.completed` / `task.incident` über eine optionale Boundary-Senke; die
+    API emittiert `instance.started` / `instance.completed`. Der Kern bleibt
+    rein (die Senke speist nie in die Engine zurück).
+  - **Persistenz**: `WebhookStore` (Protocol) mit `InMemoryWebhookStore` und
+    `SqlAlchemyWebhookStore` (Dokument-Zeilen-Muster), Migration
+    `0007_webhook_outbox` (Abo-, Outbox- und Delivery-Tabellen).
+  - **Endpunkte** (`/v1/webhooks`): `GET`/`POST /v1/webhooks`,
+    `DELETE …/{id}`, `POST …/{id}/test` (synthetischer Ping), `GET …/{id}/deliveries`
+    (Delivery-Log), abgesichert über `events:subscribe` (modeler/admin).
+  - Rein additiv, Boundary-only; der Kern bleibt rein. Alle bestehenden Tests
+    bleiben grün (445 Tests, +27 neue in `tests/test_webhooks_outbox.py`).
+- **Integrationsschicht Phase P3 – Daten-Connectoren (R4/R5, Konzept §7)**:
+  Reale, parametrisierte Datenanbindung an Fachsysteme über die bestehende
+  DAL-SPI.
+  - **`SqlAlchemyConnector`** (`dal.py`): realer SQL-Connector über SQLAlchemy
+    Core für jeden unterstützten Dialekt (PostgreSQL, MySQL/MariaDB, MS SQL,
+    SQLite, …). Schlüssel und Werte reisen ausschließlich als **Bind-Parameter**;
+    Tabellen-/Spalten-**Bezeichner** werden gegen ein striktes Muster
+    whitelisted und dialekt-gequotet – keine Injektionsfläche.
+  - **Connection-Registry & Secret-Store** (`connections.py`, neu):
+    `ConnectionRegistry` bildet `connector_id` → technische Verbindung
+    (`ConnectionConfig`) ab und baut Connectoren **lazy**. Secrets bleiben als
+    `${ENV}`-Referenzen in der URL und werden erst zur Verbindungszeit aus der
+    Umgebung aufgelöst (nie im Schema/VCS). `build_connection_registry()` liest
+    `PROCWORKS_CONNECTIONS` (JSON-Datei oder Inline-JSON).
+  - **Bidirektionaler Datenfluss** (`integration_runtime.py`): der
+    External-Task-Treiber führt jetzt **Pre-Fetch** (READ auf `EXTERNAL`-Element
+    → Datensatz beim Lock ins Eingabepaket) und **Post-Flush** (WRITE auf
+    `EXTERNAL`-Element → vor dem Engine-Fortschritt zum Connector geschrieben)
+    aus. Connector-Fehler erscheinen als `502`, ohne den Schritt voranzutreiben.
+  - **Endpunkte** (`/v1/connectors`): `GET /v1/connectors` (Metadaten, nie
+    Secrets), `POST …/{id}/test` (read-only Ping), `POST …/{id}/sample-read`
+    (Beispieldatensätze für die GUI-Mapping-Hilfe), abgesichert über `data:read`.
+  - Rein additiv, Boundary-only; der Kern bleibt rein. Alle bestehenden Tests
+    bleiben grün (418 Tests, +21 neue in `tests/test_connectors_sql.py`).
+    OData/Dynamics-365 bleibt als Folge-Connector offen (SPI unverändert).
+- **Integrationsschicht Phase P2 – External-Task-Runtime / Outbound-Pull (E11)**:
+  Automatische Aktivitäten werden als von Fremd-Workern abholbare Arbeitsschlange
+  bereitgestellt, gemäß
+  [docs/Integrations-Konzept-Externe-Anbindung.md](docs/Integrations-Konzept-Externe-Anbindung.md) §6.
+  - **Runtime-Treiber** (`integration_runtime.py`, neu): `ExternalTaskRuntime`
+    materialisiert Tasks **lazy** beim Fetch-and-lock-Scan (für aktivierte
+    automatische `EXTERNAL_TASK`-Schritte ohne offenen Task), löst das
+    Eingabe-Datenpaket aus `parameter_mapping`/READ-Zugriffen auf, schreibt
+    Ausgaben über `parameter_mapping`/WRITE-Zugriffe und ruft den **reinen**
+    Kern (`complete_activity`) – der Kern bleibt unangetastet.
+  - **Robustheit**: Worker-gebundenes Lock mit Sichtbarkeitsfenster, automatische
+    Rückgewinnung abgelaufener Locks, **exactly-once**-Abschluss über die
+    Zustandsmaschine (ein doppelter Abschluss wird abgewiesen), Retry mit
+    exponentiellem Back-off, Dead-Letter als `INCIDENT` bei erschöpften Retries,
+    Prioritäts-Sortierung der Schlange.
+  - **Endpunkte** (`/v1/external-tasks`): `POST …/fetch-and-lock`,
+    `POST …/{taskId}/complete`, `…/failure`, `…/bpmn-error`, `…/extend-lock`,
+    `…/unlock`, `GET …/{taskId}`, plus `GET /v1/incidents` und
+    `POST /v1/incidents/{id}/resolve`. Fetch ist über `tasks:fetch`, alle
+    schreibenden Aktionen über `tasks:complete` abgesichert.
+  - **Modellierung**: Neuer Endpunkt `POST /schemas/{id}/automation`
+    (`set_automation`) zum Konfigurieren von Topic/Retry der Automatik-Bindung.
+  - **Persistenz**: `ExternalTaskStore` (in-memory + SQLAlchemy `external_task`/
+    `incident`-Tabellen), Migration `0006_external_task`. Additive
+    `ExternalTask`-Felder `available_at`/`error_code`; gemeinsamer Typprüfer
+    `value_matches_type` (Modell) für Inbound-Daten und Task-Ausgaben.
+  - Rein additiv, Boundary-only; der Kern bleibt rein. Alle bestehenden Tests
+    bleiben grün (397 Tests, +15 neue in `tests/test_external_tasks.py`).
+- **Integrationsschicht Phase P1 – Inbound-API-Härtung (E10)**: Versionierte,
+  maximal offene Eintrittstür für Fremd-Tools gemäß
+  [docs/Integrations-Konzept-Externe-Anbindung.md](docs/Integrations-Konzept-Externe-Anbindung.md) §5.
+  - **Service-Identität & Scopes**: Neue Maschinen-Rolle `integration` neben den
+    Personen-Rollen sowie feingranulare Scopes (`instances:start`,
+    `tasks:complete`, `tasks:fetch`, `data:read`, `data:write`,
+    `events:subscribe`, Wildcard `*`). Service-Token tragen ihre Scopes im
+    `PROCWORKS_TOKENS`-JSON; sie werden gegen die bekannte Scope-/Rollenliste
+    validiert. Personen-/Open-Identitäten bleiben unverändert (Zugriff weiterhin
+    rein rollenbasiert).
+  - **Versionierter `/v1`-Router**: `POST /v1/schemas/{id}/instances`,
+    `GET /v1/instances/{id}`, `GET /v1/instances/{id}/tasks`,
+    `POST /v1/instances/{id}/nodes/{nodeId}/complete`,
+    `POST /v1/instances/{id}/nodes/{nodeId}/decide`,
+    `GET /v1/instances/{id}/data`, `PUT /v1/instances/{id}/data`. Die Endpunkte
+    spiegeln die bestehende Laufzeitlogik (gleicher validate-before-commit-Pfad)
+    und werden über Integrations-Scopes abgesichert; ein reines Service-Token
+    wird auf seine Scopes eingeschränkt (Least Privilege), ohne Personen-Rollen
+    einzuschränken.
+  - **Idempotenz**: Mutierende `/v1`-Aufrufe akzeptieren einen
+    `Idempotency-Key`-Header; eine Wiederholung mit gleichem Schlüssel liefert
+    dieselbe erste Antwort zurück, ohne erneut auszuführen (kein Doppelstart,
+    kein Doppelabschluss bei Netz-Retries). In-Memory-Variante; DB-Variante folgt.
+  - **Datenschnittstelle**: `GET /v1/instances/{id}/data` liest alle
+    Prozessvariablen; `PUT /v1/instances/{id}/data` setzt Werte mit
+    Laufzeit-Typprüfung gegen die deklarierten Datenelement-Typen (D3 an der
+    Grenze; unbekannte Elemente/Typfehler → 422).
+  - Rein additiv, Boundary-only; der Kern bleibt unangetastet. Alle bestehenden
+    Tests bleiben grün (382 Tests, +10 neue in `tests/test_integration_inbound.py`).
+- **Integrationsschicht Phase P0 – Meta-Modell & Korrektheitsregeln (E11)**: Erste
+  Bausteine der „maximal offenen“ externen Anbindung gemäß
+  [docs/Integrations-Konzept-Externe-Anbindung.md](docs/Integrations-Konzept-Externe-Anbindung.md).
+  - **Meta-Modell**: Neue Aufzählung `AutomationKind` (`MANUAL_NONE`,
+    `EXTERNAL_TASK`, `HTTP_PUSH`) und additive Felder an `ServiceBinding`
+    (`automation`, `topic`, `endpoint_ref`, `retry_max`, `retry_backoff_ms`,
+    `request_timeout_ms`). Bestehende Schemata bleiben unverändert
+    (`automation` ist standardmäßig `MANUAL_NONE`). Zusätzlich additive
+    Laufzeit-Entitäten `ExternalTask`/`ExternalTaskState`, `Incident` und
+    `WebhookSubscription` (vom Validator nie geprüft, für spätere Phasen).
+  - **Operation** `set_automation(schema, node_id, automation, …)`: konfiguriert,
+    wie ein automatischer Schritt von außen angesteuert wird; erzwingt eine
+    bestehende Service-Bindung und `ACTIVITY` als Knotentyp (sonst `OP`).
+  - **Korrektheitsregeln I1–I4** (Validator, „silent unless used“): I1 prüft die
+    Wohlgeformtheit (`EXTERNAL_TASK` ⇒ Topic, `HTTP_PUSH` ⇒ Endpoint-Referenz),
+    I2 die Konsistenz (automatisierte Bindung ist `automatic`, genau ein
+    Ausführungsmuster), I3 die referenzielle Integrität der Parameterabbildung
+    und I4 verhindert eingebettete Geheimnisse/URLs in Referenzfeldern.
+  - Rein additiv: integrationsfreie Modelle erzeugen keinerlei I-Befund; alle
+    bestehenden Tests bleiben grün (372 Tests, +14 neue in
+    `tests/test_integration_rules.py`).
+
 - **Ausgewählte Instanz im Monitoring hervorgehoben**: Beim Klick auf eine aktive
   Instanz in der Tabelle *Aktive Instanzen* (Monitoring) wird die zugehörige Zeile
   jetzt **farblich hervorgehoben**, solange ihr Detail unten geöffnet ist – so ist

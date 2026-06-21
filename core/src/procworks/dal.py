@@ -21,13 +21,22 @@ same ``Connector`` protocol.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from procworks.model import DataSourceKind, ExternalBinding, ProcessSchema
 
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
 #: A single external record as returned/accepted by a connector.
 Record = Mapping[str, object]
+
+#: A single, unqualified SQL identifier (column / unqualified table name).
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: An entity name, optionally schema-qualified (``schema.table``).
+_ENTITY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 
 
 class DataAccessError(RuntimeError):
@@ -78,6 +87,136 @@ class InMemoryConnector:
             for row in rows.values()
             if all(row.get(field) == value for field, value in filters.items())
         ]
+
+
+def _safe_identifier(name: str) -> str:
+    """Return ``name`` if it is a single safe SQL identifier, else raise.
+
+    Table/column names cannot be passed as bind parameters, so they are the only
+    injection surface. Every identifier that reaches a statement is whitelisted
+    against a strict pattern (letters/digits/underscore, no quoting tricks) and
+    additionally dialect-quoted before interpolation -- values always travel as
+    bound parameters.
+    """
+
+    if not _IDENTIFIER.match(name):
+        raise DataAccessError(f"unsafe SQL identifier '{name}'")
+    return name
+
+
+def _safe_entity(name: str) -> str:
+    """Return ``name`` if it is a safe (optionally schema-qualified) entity."""
+
+    if not _ENTITY.match(name):
+        raise DataAccessError(f"unsafe SQL entity '{name}'")
+    return name
+
+
+class SqlAlchemyConnector:
+    """A real, parameterized SQL connector built on SQLAlchemy Core.
+
+    Talks to any SQLAlchemy-supported dialect (PostgreSQL, MySQL/MariaDB,
+    Microsoft SQL Server, SQLite, ...). The engine carries the credentials and
+    is built server-side from the connection registry -- never from the schema.
+
+    Security by design:
+      * Lookup keys and written values are always **bound parameters**; they are
+        never concatenated into a statement (no injection surface).
+      * Table/column **identifiers** are whitelisted against a strict pattern and
+        dialect-quoted, so a crafted entity/column name cannot break out either.
+
+    ``key_column`` is the primary-key column used to address a record; per-entity
+    overrides may be supplied via ``entity_key_columns``.
+    """
+
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        key_column: str = "id",
+        entity_key_columns: Mapping[str, str] | None = None,
+    ) -> None:
+        self._engine = engine
+        self._key_column = key_column
+        self._entity_key_columns = dict(entity_key_columns or {})
+
+    def _key_col(self, entity: str) -> str:
+        return self._entity_key_columns.get(entity, self._key_column)
+
+    def _quote_ident(self, name: str) -> str:
+        return self._engine.dialect.identifier_preparer.quote(_safe_identifier(name))
+
+    def _quote_entity(self, entity: str) -> str:
+        _safe_entity(entity)
+        return ".".join(self._quote_ident(part) for part in entity.split("."))
+
+    def read(self, entity: str, key: object) -> Record:
+        from sqlalchemy import text
+
+        table = self._quote_entity(entity)
+        key_col = self._quote_ident(self._key_col(entity))
+        stmt = text(f"SELECT * FROM {table} WHERE {key_col} = :key")
+        with self._engine.connect() as conn:
+            row = conn.execute(stmt, {"key": key}).mappings().first()
+        if row is None:
+            raise DataAccessError(f"no record '{key}' in entity '{entity}'")
+        return dict(row)
+
+    def write(self, entity: str, key: object, values: Record) -> None:
+        from sqlalchemy import text
+
+        table = self._quote_entity(entity)
+        key_name = self._key_col(entity)
+        key_col = self._quote_ident(key_name)
+        cols = [c for c in values if c != key_name]
+        params: dict[str, object] = {f"v_{c}": values[c] for c in cols}
+        params["key"] = key
+        with self._engine.begin() as conn:
+            exists = conn.execute(
+                text(f"SELECT 1 FROM {table} WHERE {key_col} = :key"), {"key": key}
+            ).first()
+            if exists is not None:
+                if cols:
+                    assignments = ", ".join(
+                        f"{self._quote_ident(c)} = :v_{c}" for c in cols
+                    )
+                    conn.execute(
+                        text(f"UPDATE {table} SET {assignments} WHERE {key_col} = :key"),
+                        params,
+                    )
+                return
+            insert_cols = ", ".join([key_col, *(self._quote_ident(c) for c in cols)])
+            placeholders = ", ".join([":key", *(f":v_{c}" for c in cols)])
+            conn.execute(
+                text(f"INSERT INTO {table} ({insert_cols}) VALUES ({placeholders})"),
+                params,
+            )
+
+    def query(self, entity: str, filters: Record) -> list[Record]:
+        from sqlalchemy import text
+
+        table = self._quote_entity(entity)
+        params: dict[str, object] = {}
+        where = ""
+        if filters:
+            clauses = []
+            for i, (field, value) in enumerate(filters.items()):
+                placeholder = f"f{i}"
+                clauses.append(f"{self._quote_ident(field)} = :{placeholder}")
+                params[placeholder] = value
+            where = " WHERE " + " AND ".join(clauses)
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(f"SELECT * FROM {table}{where}"), params).mappings().all()
+        return [dict(row) for row in rows]
+
+    def ping(self) -> None:
+        """Read-only connection check used by ``/connectors/{id}/test``."""
+
+        from sqlalchemy import text
+
+        with self._engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+
 
 
 class DataAccessLayer:

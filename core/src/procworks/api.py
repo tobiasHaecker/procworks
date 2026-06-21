@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,13 @@ from procworks.audit import (
     instance_timeline,
 )
 from procworks.auth import (
+    INTEGRATION,
+    SCOPE_DATA_READ,
+    SCOPE_DATA_WRITE,
+    SCOPE_EVENTS_SUBSCRIBE,
+    SCOPE_INSTANCES_START,
+    SCOPE_TASKS_COMPLETE,
+    SCOPE_TASKS_FETCH,
     AuthError,
     OpenAuthBackend,
     Principal,
@@ -50,31 +57,48 @@ from procworks.auth_password import (
     user_view,
 )
 from procworks.bpmn import BpmnError
+from procworks.connections import build_connection_registry
+from procworks.dal import DataAccessError
 from procworks.execution import ExecutionError
+from procworks.integration_runtime import ExternalTaskError, ExternalTaskRuntime
 from procworks.metrics import ModelReport
 from procworks.model import (
     AccessMode,
+    AutomationKind,
     ConnectorKind,
     DataType,
     ExecutorKind,
+    ExternalTask,
     FollowUpMode,
     FollowUpTrigger,
     ImpactUrgency,
+    Incident,
     InstanceState,
     LifecycleState,
     OrgModel,
     ProcessInstance,
     ProcessSchema,
+    ServiceBinding,
     StaffRule,
     TemplateParameter,
     TimeConstraint,
     ValueClass,
+    WebhookDelivery,
+    WebhookSubscription,
     WorkItemPriority,
+    value_matches_type,
+)
+from procworks.outbox import (
+    OutboxDispatcher,
+    WebhookError,
+    build_push_endpoint_registry,
 )
 from procworks.store import (
+    create_external_task_store,
     create_instance_store,
     create_org_store,
     create_store,
+    create_webhook_store,
     dehydrate_org,
     hydrate_org,
     make_org_resolver,
@@ -110,6 +134,10 @@ app.add_middleware(
 _store = create_store()
 _instances = create_instance_store()
 _org_store = create_org_store()
+_external_tasks = create_external_task_store()
+_connections = build_connection_registry()
+_outbox = OutboxDispatcher(create_webhook_store())
+_push_endpoints = build_push_endpoint_registry()
 _resolver = make_resolver(_store)
 _org_resolver = make_org_resolver(_org_store)
 _context = exe.ExecutionContext(_resolver, _instances)
@@ -157,6 +185,74 @@ _read = Depends(require_role("viewer", "operator", "modeler", "admin"))
 _model = Depends(require_role("modeler", "admin"))
 _run = Depends(require_role("operator", "modeler", "admin"))
 _admin = Depends(require_role("admin"))
+
+
+def require_scope(scope: str, *human_roles: str) -> Callable[[Principal], Principal]:
+    """Build a dependency for a versioned ``/v1`` integration endpoint.
+
+    Two identities may pass, mirroring the two ways the boundary is used:
+
+    * a **human / open** principal that holds one of ``human_roles`` -- this is
+      the existing role-based RBAC, so the open dev mode and logged-in users
+      reach ``/v1`` exactly as they reach the legacy endpoints; and
+    * an **integration service token** (role :data:`INTEGRATION`) that carries
+      the required ``scope`` (or the ``"*"`` wildcard) -- a service is confined
+      to the scopes its token was minted with (least privilege).
+
+    A service token is therefore *not* admitted by role alone, and a human is
+    never asked for scopes; the two paths never weaken one another.
+    """
+
+    def _dep(principal: Principal = Depends(get_principal)) -> Principal:
+        if principal.roles.intersection(human_roles):
+            return principal
+        if INTEGRATION in principal.roles and (
+            scope in principal.scopes or "*" in principal.scopes
+        ):
+            return principal
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    return _dep
+
+
+class _IdempotencyStore:
+    """In-memory ``(subject, key) -> response`` cache for inbound retries.
+
+    Mutating ``/v1`` calls may carry an ``Idempotency-Key`` header; a repeated
+    key from the same identity replays the first **successful** response without
+    re-executing the operation, so a network retry can never start a second
+    instance or complete a task twice. Failures are never cached (the caller may
+    retry). This is the simple in-process variant; a DB-backed store with a TTL
+    is a later, drop-in step (roadmap P2).
+    """
+
+    def __init__(self) -> None:
+        self._seen: dict[tuple[str, str], object] = {}
+
+    def get(self, subject: str, key: str) -> object | None:
+        return self._seen.get((subject, key))
+
+    def put(self, subject: str, key: str, response: object) -> None:
+        self._seen[(subject, key)] = response
+
+
+_idempotency = _IdempotencyStore()
+
+
+def _idempotent(
+    principal: Principal, key: str | None, produce: Callable[[], object]
+) -> object:
+    """Run ``produce`` once per ``(identity, Idempotency-Key)``; replay after."""
+
+    if not key:
+        return produce()
+    cached = _idempotency.get(principal.subject, key)
+    if cached is not None:
+        return cached
+    result = produce()
+    _idempotency.put(principal.subject, key, result)
+    return result
+
 
 
 def _auth_mode() -> str:
@@ -223,6 +319,17 @@ def _label_of(schema: ProcessSchema, node_id: str) -> str | None:
     return node.label if node is not None else None
 
 
+def _instance_event_payload(instance: ProcessInstance) -> dict[str, object]:
+    """Build the webhook payload for an instance lifecycle event."""
+
+    return {
+        "instance_id": instance.id,
+        "schema_id": instance.schema_id,
+        "schema_version": instance.schema_version,
+        "state": instance.state.value,
+    }
+
+
 def _record_completion(before: ProcessInstance, after: ProcessInstance) -> None:
     """Append an INSTANCE_COMPLETED event when an instance has just finished."""
 
@@ -236,6 +343,7 @@ def _record_completion(before: ProcessInstance, after: ProcessInstance) -> None:
             after.schema_id,
             schema_version=after.schema_version,
         )
+        _emit_event("instance.completed", _instance_event_payload(after))
 
 
 # --- request models ------------------------------------------------------
@@ -421,6 +529,16 @@ class AssignServiceRequest(BaseModel):
     automatic: bool = False
     template_id: str | None = Field(default=None, examples=["tmpl_erfassen"])
     parameter_mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class SetAutomationRequest(BaseModel):
+    node_id: str = Field(..., examples=["act_1"])
+    automation: AutomationKind = Field(..., examples=[AutomationKind.EXTERNAL_TASK])
+    topic: str | None = Field(default=None, examples=["invoice-check"])
+    endpoint_ref: str | None = Field(default=None, examples=["webhook_1"])
+    retry_max: int | None = Field(default=None, ge=0, examples=[5])
+    retry_backoff_ms: int | None = Field(default=None, ge=0, examples=[2000])
+    request_timeout_ms: int | None = Field(default=None, ge=0, examples=[30000])
 
 
 class AddActivityTemplateRequest(BaseModel):
@@ -648,6 +766,84 @@ def _effective_schema_for(instance: ProcessInstance) -> ProcessSchema:
 
     base = _get_or_404(instance.schema_id)
     return hydrate_org(adhoc.effective_schema(instance, base), _org_resolver)
+
+
+def _emit_event(event_type: str, payload: dict[str, object]) -> None:
+    """Enqueue a domain event on the outbox and attempt best-effort delivery.
+
+    The webhook side of the open API (E13): emission is transactional (the entry
+    is queued before delivery), and dispatch is attempted synchronously so a
+    healthy receiver is notified promptly. Delivery never blocks or fails the
+    triggering request -- exhausted retries become dead-letters instead.
+    """
+
+    _outbox.emit(event_type, payload)
+    _outbox.dispatch_pending()
+
+
+def _push_external(binding: ServiceBinding, payload: dict[str, object]) -> None:
+    """Deliver an ``HTTP_PUSH`` activity package to its tool endpoint (E11/E13).
+
+    Resolves the binding's ``endpoint_ref`` to a server-configured, trusted URL
+    (and optional signing secret), then enqueues the push on the same robust
+    outbox used for webhooks (durable, signed, retried, circuit-broken). Raising
+    on an unresolved/blocked endpoint leaves the task pending so it is retried on
+    a later drive -- the engine is never affected.
+    """
+
+    target = _push_endpoints.resolve(binding.endpoint_ref or "")
+    _outbox.push(
+        target.url,
+        target.secret_ref,
+        "task.push",
+        payload,
+        max_attempts=binding.retry_max,
+    )
+    _outbox.dispatch_pending()
+
+
+def _drive_pushes() -> None:
+    """Best-effort push of newly activated ``HTTP_PUSH`` steps after an advance.
+
+    Called after every engine advance (start/complete/decide). It never raises:
+    a push problem must not fail the triggering request nor corrupt the instance,
+    so failures are swallowed and retried on the next advance.
+    """
+
+    try:
+        _external_runtime().drive_push()
+    except Exception:  # noqa: BLE001 -- the push side must never break a process
+        pass
+
+
+def _external_runtime() -> ExternalTaskRuntime:
+    """Build the external-task boundary driver over the module singletons.
+
+    Stateless wiring around the shared stores and engine context, so a fresh
+    instance per request is fine and keeps the runtime free of global state.
+    """
+
+    return ExternalTaskRuntime(
+        _external_tasks,
+        _instances,
+        _effective_schema_for,
+        _context,
+        dal=_connections.data_access_layer(),
+        on_event=_emit_event,
+        on_push=_push_external,
+    )
+
+
+def _run_external(action: Callable[[], object]) -> object:
+    """Execute an external-task action, mapping ExternalTaskError to HTTP."""
+
+    try:
+        return action()
+    except ExternalTaskError as err:
+        raise HTTPException(
+            status_code=err.status, detail={"message": err.message}
+        ) from err
+
 
 
 def _commit_instance_or_422(result_fn: object) -> ProcessInstance:
@@ -1302,6 +1498,27 @@ def post_assign_service(schema_id: str, req: AssignServiceRequest) -> ProcessSch
     )
 
 
+@app.post(
+    "/schemas/{schema_id}/automation", response_model=ProcessSchema, dependencies=[_model]
+)
+def post_set_automation(schema_id: str, req: SetAutomationRequest) -> ProcessSchema:
+    """Configure how an automatic ACTIVITY is driven (E11: external task / push)."""
+
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(
+        lambda: ops.set_automation(
+            schema,
+            req.node_id,
+            req.automation,
+            topic=req.topic,
+            endpoint_ref=req.endpoint_ref,
+            retry_max=req.retry_max,
+            retry_backoff_ms=req.retry_backoff_ms,
+            request_timeout_ms=req.request_timeout_ms,
+        )
+    )
+
+
 @app.post("/schemas/{schema_id}/staff-rule", response_model=ProcessSchema, dependencies=[_model])
 def post_assign_staff_rule(schema_id: str, req: AssignStaffRuleRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
@@ -1477,6 +1694,7 @@ def post_instantiate(
         instance.schema_id,
         schema_version=instance.schema_version,
     )
+    _emit_event("instance.started", _instance_event_payload(instance))
     if instance.state is InstanceState.COMPLETED:
         _audit.append(
             EventType.INSTANCE_COMPLETED,
@@ -1484,6 +1702,8 @@ def post_instantiate(
             instance.schema_id,
             schema_version=instance.schema_version,
         )
+        _emit_event("instance.completed", _instance_event_payload(instance))
+    _drive_pushes()
     return instance
 
 
@@ -1601,6 +1821,7 @@ def post_complete_activity(
         agent_id=acting_agent,
     )
     _record_completion(before, after)
+    _drive_pushes()
     return after
 
 
@@ -1627,6 +1848,7 @@ def post_decide_branch(
         detail={"target_node_id": req.target_node_id},
     )
     _record_completion(before, after)
+    _drive_pushes()
     return after
 
 
@@ -1789,3 +2011,641 @@ def get_monitoring_revision() -> MonitoringRevision:
     """
 
     return MonitoringRevision(revision=_audit.revision())
+
+
+# --- versioned integration API (/v1) — inbound control by external tools -
+#
+# These endpoints mirror the existing runtime endpoints under a stable,
+# versioned ``/v1`` prefix and gate them with integration *scopes* (so a service
+# token is confined to least privilege), while remaining fully usable by human/
+# open principals via their roles. Mutating calls honour an ``Idempotency-Key``
+# header. The endpoints add no new domain logic: they reuse the same
+# validate-before-commit core path as the GUI (Section 5.4, API-first).
+
+_v1 = APIRouter(prefix="/v1", tags=["integration"])
+
+
+class SetDataRequest(BaseModel):
+    values: dict[str, object] = Field(
+        ..., examples=[{"betrag": 1200, "status": "open"}]
+    )
+
+
+class V1CompleteRequest(BaseModel):
+    data: dict[str, object] = Field(default_factory=dict)
+    agent_id: str | None = Field(default=None, examples=["a1"])
+
+
+class V1DecideRequest(BaseModel):
+    target_node_id: str = Field(..., examples=["act_2"])
+
+
+def _validate_data_values(
+    schema: ProcessSchema, values: dict[str, object]
+) -> list[ValidationFinding]:
+    """Boundary type/existence check for inbound data writes (runtime D3)."""
+
+    findings: list[ValidationFinding] = []
+    for element_id, value in values.items():
+        element = schema.data_elements.get(element_id)
+        if element is None:
+            findings.append(
+                ValidationFinding(
+                    rule="D3",
+                    message=f"unknown data element '{element_id}'",
+                )
+            )
+            continue
+        if not value_matches_type(element.data_type, value):
+            findings.append(
+                ValidationFinding(
+                    rule="D3",
+                    message=(
+                        f"value for '{element_id}' is not a "
+                        f"{element.data_type.value}"
+                    ),
+                )
+            )
+    return findings
+
+
+@_v1.post(
+    "/schemas/{schema_id}/instances",
+    response_model=ProcessInstance,
+    status_code=201,
+)
+def v1_start_instance(
+    schema_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    principal: Principal = Depends(
+        require_scope(SCOPE_INSTANCES_START, "operator", "modeler", "admin")
+    ),
+) -> ProcessInstance:
+    """Start an instance of a RELEASED schema (integration entry point).
+
+    Unlike the legacy endpoint, this never starts a throw-away *test* instance
+    of a draft: a service may only run released processes (409 otherwise).
+    """
+
+    def produce() -> ProcessInstance:
+        schema = _get_or_404(schema_id)
+        if schema.lifecycle_state is not LifecycleState.RELEASED:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "only released schemas can be instantiated via /v1"
+                },
+            )
+        instance = _run_or_409(lambda: exe.instantiate(schema, context=_context))
+        _audit.append(
+            EventType.INSTANCE_CREATED,
+            instance.id,
+            instance.schema_id,
+            schema_version=instance.schema_version,
+        )
+        _emit_event("instance.started", _instance_event_payload(instance))
+        if instance.state is InstanceState.COMPLETED:
+            _audit.append(
+                EventType.INSTANCE_COMPLETED,
+                instance.id,
+                instance.schema_id,
+                schema_version=instance.schema_version,
+            )
+            _emit_event("instance.completed", _instance_event_payload(instance))
+        _drive_pushes()
+        return instance
+
+    result = _idempotent(principal, idempotency_key, produce)
+    assert isinstance(result, ProcessInstance)
+    return result
+
+
+@_v1.get("/instances/{instance_id}", response_model=ProcessInstance)
+def v1_get_instance(
+    instance_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "viewer", "operator", "modeler", "admin")
+    ),
+) -> ProcessInstance:
+    return _get_instance_or_404(instance_id)
+
+
+@_v1.get("/instances/{instance_id}/tasks", response_model=list[OpenTask])
+def v1_get_instance_tasks(
+    instance_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "viewer", "operator", "modeler", "admin")
+    ),
+) -> list[OpenTask]:
+    instance = _get_instance_or_404(instance_id)
+    schema = _effective_schema_for(instance)
+    return assignment.open_tasks(schema, instance)
+
+
+@_v1.post(
+    "/instances/{instance_id}/nodes/{node_id}/complete",
+    response_model=ProcessInstance,
+)
+def v1_complete_task(
+    instance_id: str,
+    node_id: str,
+    req: V1CompleteRequest | None = None,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ProcessInstance:
+    """Complete a task and hand over its data (mirror of ``/complete``)."""
+
+    body = req or V1CompleteRequest()
+
+    def produce() -> ProcessInstance:
+        completion = CompleteActivityRequest(
+            node_id=node_id, data=body.data, agent_id=body.agent_id
+        )
+        return post_complete_activity(instance_id, completion, principal)
+
+    result = _idempotent(principal, idempotency_key, produce)
+    assert isinstance(result, ProcessInstance)
+    return result
+
+
+@_v1.post(
+    "/instances/{instance_id}/nodes/{node_id}/decide",
+    response_model=ProcessInstance,
+)
+def v1_decide_branch(
+    instance_id: str,
+    node_id: str,
+    req: V1DecideRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ProcessInstance:
+    """Resolve an XOR decision (mirror of ``/decide``)."""
+
+    def produce() -> ProcessInstance:
+        decision = DecideBranchRequest(
+            node_id=node_id, target_node_id=req.target_node_id
+        )
+        return post_decide_branch(instance_id, decision, principal)
+
+    result = _idempotent(principal, idempotency_key, produce)
+    assert isinstance(result, ProcessInstance)
+    return result
+
+
+@_v1.get("/instances/{instance_id}/data", response_model=dict[str, object])
+def v1_get_instance_data(
+    instance_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "viewer", "operator", "modeler", "admin")
+    ),
+) -> dict[str, object]:
+    """Read all process variable values of an instance."""
+
+    return dict(_get_instance_or_404(instance_id).data_values)
+
+
+@_v1.put("/instances/{instance_id}/data", response_model=dict[str, object])
+def v1_put_instance_data(
+    instance_id: str,
+    req: SetDataRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_WRITE, "operator", "modeler", "admin")
+    ),
+) -> dict[str, object]:
+    """Set process variable values, type-checked against the schema (D3)."""
+
+    def produce() -> dict[str, object]:
+        instance = _get_instance_or_404(instance_id)
+        schema = _effective_schema_for(instance)
+        findings = _validate_data_values(schema, req.values)
+        if findings:
+            raise HTTPException(
+                status_code=422,
+                detail={"findings": [f.model_dump() for f in findings]},
+            )
+        updated = instance.model_copy(deep=True)
+        updated.data_values.update(req.values)
+        _instances.put(updated)
+        return dict(updated.data_values)
+
+    result = _idempotent(principal, idempotency_key, produce)
+    assert isinstance(result, dict)
+    return result
+
+
+# --- External-task runtime (outbound integration boundary, roadmap E11) ----
+
+
+class FetchAndLockRequest(BaseModel):
+    worker_id: str = Field(..., examples=["worker-1"])
+    topics: list[str] = Field(..., examples=[["invoice-check"]])
+    lock_ms: int = Field(default=300_000, ge=1, examples=[300000])
+    max_tasks: int = Field(default=1, ge=1, examples=[10])
+    use_priority: bool = True
+
+
+class CompleteTaskRequest(BaseModel):
+    worker_id: str = Field(..., examples=["worker-1"])
+    variables: dict[str, object] = Field(
+        default_factory=dict, examples=[{"approved": True}]
+    )
+
+
+class FailureRequest(BaseModel):
+    worker_id: str = Field(..., examples=["worker-1"])
+    error_message: str = Field(..., examples=["connector timeout"])
+    retries: int | None = Field(default=None, ge=0, examples=[3])
+    retry_timeout_ms: int | None = Field(default=None, ge=0, examples=[5000])
+
+
+class BpmnErrorRequest(BaseModel):
+    worker_id: str = Field(..., examples=["worker-1"])
+    error_code: str = Field(..., examples=["INSUFFICIENT_FUNDS"])
+
+
+class ExtendLockRequest(BaseModel):
+    worker_id: str = Field(..., examples=["worker-1"])
+    lock_ms: int = Field(..., ge=1, examples=[60000])
+
+
+class WorkerRequest(BaseModel):
+    worker_id: str = Field(..., examples=["worker-1"])
+
+
+@_v1.post("/external-tasks/fetch-and-lock", response_model=list[ExternalTask])
+def v1_fetch_and_lock(
+    req: FetchAndLockRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_FETCH, "operator", "modeler", "admin")
+    ),
+) -> list[ExternalTask]:
+    """Claim automatic external-task work for the given topics (outbound pull)."""
+
+    result = _run_external(
+        lambda: _external_runtime().fetch_and_lock(
+            req.worker_id,
+            req.topics,
+            lock_ms=req.lock_ms,
+            max_tasks=req.max_tasks,
+            use_priority=req.use_priority,
+        )
+    )
+    assert isinstance(result, list)
+    return result
+
+
+@_v1.get("/external-tasks/{task_id}", response_model=ExternalTask)
+def v1_get_external_task(
+    task_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_FETCH, "viewer", "operator", "modeler", "admin")
+    ),
+) -> ExternalTask:
+    task = _external_runtime().get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404, detail={"message": f"external task '{task_id}' not found"}
+        )
+    return task
+
+
+@_v1.post("/external-tasks/{task_id}/complete", response_model=ExternalTask)
+def v1_complete_external_task(
+    task_id: str,
+    req: CompleteTaskRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ExternalTask:
+    """Report success: write outputs and advance the instance (exactly-once)."""
+
+    def produce() -> ExternalTask:
+        result = _run_external(
+            lambda: _external_runtime().complete(
+                task_id, req.worker_id, req.variables
+            )
+        )
+        assert isinstance(result, ExternalTask)
+        _drive_pushes()
+        return result
+
+    outcome = _idempotent(principal, idempotency_key, produce)
+    assert isinstance(outcome, ExternalTask)
+    return outcome
+
+
+@_v1.post("/external-tasks/{task_id}/failure", response_model=ExternalTask)
+def v1_fail_external_task(
+    task_id: str,
+    req: FailureRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ExternalTask:
+    """Report a technical failure: re-queue with back-off or raise an incident."""
+
+    result = _run_external(
+        lambda: _external_runtime().failure(
+            task_id,
+            req.worker_id,
+            req.error_message,
+            retries=req.retries,
+            retry_timeout_ms=req.retry_timeout_ms,
+        )
+    )
+    assert isinstance(result, ExternalTask)
+    return result
+
+
+@_v1.post("/external-tasks/{task_id}/bpmn-error", response_model=ExternalTask)
+def v1_bpmn_error_external_task(
+    task_id: str,
+    req: BpmnErrorRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ExternalTask:
+    """Report a business (BPMN) error for the locked task."""
+
+    result = _run_external(
+        lambda: _external_runtime().bpmn_error(
+            task_id, req.worker_id, req.error_code
+        )
+    )
+    assert isinstance(result, ExternalTask)
+    return result
+
+
+@_v1.post("/external-tasks/{task_id}/extend-lock", response_model=ExternalTask)
+def v1_extend_lock_external_task(
+    task_id: str,
+    req: ExtendLockRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ExternalTask:
+    """Prolong the lock on a long-running task."""
+
+    result = _run_external(
+        lambda: _external_runtime().extend_lock(task_id, req.worker_id, req.lock_ms)
+    )
+    assert isinstance(result, ExternalTask)
+    return result
+
+
+@_v1.post("/external-tasks/{task_id}/unlock", response_model=ExternalTask)
+def v1_unlock_external_task(
+    task_id: str,
+    req: WorkerRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
+    ),
+) -> ExternalTask:
+    """Release the lock, returning the task to the queue immediately."""
+
+    result = _run_external(
+        lambda: _external_runtime().unlock(task_id, req.worker_id)
+    )
+    assert isinstance(result, ExternalTask)
+    return result
+
+
+@_v1.get("/incidents", response_model=list[Incident])
+def v1_list_incidents(
+    unresolved_only: bool = False,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_FETCH, "viewer", "operator", "modeler", "admin")
+    ),
+) -> list[Incident]:
+    """List external-task incidents (optionally only the unresolved ones)."""
+
+    return _external_runtime().list_incidents(unresolved_only=unresolved_only)
+
+
+@_v1.post("/incidents/{incident_id}/resolve", response_model=Incident)
+def v1_resolve_incident(
+    incident_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_COMPLETE, "operator", "admin")
+    ),
+) -> Incident:
+    """Resolve an incident and re-queue its task for another attempt."""
+
+    result = _run_external(
+        lambda: _external_runtime().resolve_incident(incident_id)
+    )
+    assert isinstance(result, Incident)
+    return result
+
+
+@_v1.get("/push-endpoints", response_model=list[str])
+def v1_list_push_endpoints(
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_FETCH, "viewer", "operator", "modeler", "admin")
+    ),
+) -> list[str]:
+    """List configured ``HTTP_PUSH`` endpoint references (never URLs/secrets).
+
+    A modeller binds an automatic step to one of these references; the concrete
+    URL and signing secret stay server-side (``PROCWORKS_PUSH_ENDPOINTS``).
+    """
+
+    return _push_endpoints.refs()
+
+
+@_v1.post("/external-tasks/drive-push", response_model=list[ExternalTask])
+def v1_drive_push(
+    principal: Principal = Depends(
+        require_scope(SCOPE_TASKS_FETCH, "operator", "admin")
+    ),
+) -> list[ExternalTask]:
+    """Push activated ``HTTP_PUSH`` steps now (e.g. re-push after a back-off).
+
+    Pushes happen automatically after every advance; this endpoint lets an
+    operator force a drive so tasks waiting out a failure back-off are re-pushed
+    without waiting for the next process event. Idempotent and side-effect-safe.
+    """
+
+    return _external_runtime().drive_push()
+
+
+# --- Data connectors (registry test / sample read, roadmap P3) -------------
+
+
+class ConnectorInfo(BaseModel):
+    connector_id: str = Field(..., examples=["erp"])
+    kind: ConnectorKind = Field(..., examples=[ConnectorKind.MS_SQL])
+
+
+class ConnectorTestResult(BaseModel):
+    connector_id: str
+    ok: bool
+
+
+class SampleReadRequest(BaseModel):
+    entity: str = Field(..., examples=["Kunde"])
+    limit: int = Field(default=1, ge=1, le=100, examples=[5])
+
+
+def _require_connector(connector_id: str) -> None:
+    if not _connections.has(connector_id):
+        raise HTTPException(
+            status_code=404,
+            detail={"message": f"connector '{connector_id}' is not configured"},
+        )
+
+
+@_v1.get("/connectors", response_model=list[ConnectorInfo])
+def v1_list_connectors(
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "viewer", "operator", "modeler", "admin")
+    ),
+) -> list[ConnectorInfo]:
+    """List configured data connectors (metadata only -- never secrets)."""
+
+    return [
+        ConnectorInfo(connector_id=cfg.connector_id, kind=cfg.kind)
+        for cfg in _connections.configs()
+    ]
+
+
+@_v1.post("/connectors/{connector_id}/test", response_model=ConnectorTestResult)
+def v1_test_connector(
+    connector_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "operator", "modeler", "admin")
+    ),
+) -> ConnectorTestResult:
+    """Run a read-only connection check without revealing any secret."""
+
+    _require_connector(connector_id)
+    try:
+        _connections.test(connector_id)
+    except DataAccessError as err:
+        raise HTTPException(status_code=502, detail={"message": str(err)}) from err
+    return ConnectorTestResult(connector_id=connector_id, ok=True)
+
+
+@_v1.post("/connectors/{connector_id}/sample-read", response_model=list[dict[str, object]])
+def v1_sample_read_connector(
+    connector_id: str,
+    req: SampleReadRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "operator", "modeler", "admin")
+    ),
+) -> list[dict[str, object]]:
+    """Return a few sample records of an entity for GUI mapping help."""
+
+    _require_connector(connector_id)
+    try:
+        rows = _connections.sample_read(connector_id, req.entity, limit=req.limit)
+    except DataAccessError as err:
+        raise HTTPException(status_code=502, detail={"message": str(err)}) from err
+    return [dict(row) for row in rows]
+
+
+# --- Webhooks (event side of the open API, roadmap P4/E13) -----------------
+
+
+class WebhookCreateRequest(BaseModel):
+    url: str = Field(..., examples=["https://hooks.example.com/procworks"])
+    events: list[str] = Field(..., examples=[["instance.completed", "task.incident"]])
+    secret_ref: str = Field(
+        default="", examples=["WEBHOOK_SECRET"], description="Server-side secret name"
+    )
+
+
+def _run_webhook(action: Callable[[], object]) -> object:
+    """Execute a webhook action, mapping WebhookError to an HTTP error."""
+
+    try:
+        return action()
+    except WebhookError as err:
+        raise HTTPException(
+            status_code=err.status, detail={"message": err.message}
+        ) from err
+
+
+@_v1.get("/webhooks", response_model=list[WebhookSubscription])
+def v1_list_webhooks(
+    principal: Principal = Depends(
+        require_scope(SCOPE_EVENTS_SUBSCRIBE, "modeler", "admin")
+    ),
+) -> list[WebhookSubscription]:
+    """List webhook subscriptions (the secret itself is never returned)."""
+
+    return _outbox.list_subscriptions()
+
+
+@_v1.post("/webhooks", response_model=WebhookSubscription, status_code=201)
+def v1_create_webhook(
+    req: WebhookCreateRequest,
+    principal: Principal = Depends(
+        require_scope(SCOPE_EVENTS_SUBSCRIBE, "modeler", "admin")
+    ),
+) -> WebhookSubscription:
+    """Register a webhook subscription (validates events and the SSRF policy)."""
+
+    result = _run_webhook(
+        lambda: _outbox.subscribe(req.url, req.events, req.secret_ref)
+    )
+    assert isinstance(result, WebhookSubscription)
+    return result
+
+
+@_v1.delete("/webhooks/{subscription_id}", status_code=204)
+def v1_delete_webhook(
+    subscription_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_EVENTS_SUBSCRIBE, "modeler", "admin")
+    ),
+) -> None:
+    """Remove a webhook subscription."""
+
+    _run_webhook(lambda: _outbox.unsubscribe(subscription_id))
+
+
+@_v1.post("/webhooks/{subscription_id}/test", response_model=WebhookDelivery)
+def v1_test_webhook(
+    subscription_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_EVENTS_SUBSCRIBE, "modeler", "admin")
+    ),
+) -> WebhookDelivery:
+    """Send a synthetic ping to one subscription and return the attempt result."""
+
+    result = _run_webhook(lambda: _outbox.test_delivery(subscription_id))
+    assert isinstance(result, WebhookDelivery)
+    return result
+
+
+@_v1.get(
+    "/webhooks/{subscription_id}/deliveries", response_model=list[WebhookDelivery]
+)
+def v1_webhook_deliveries(
+    subscription_id: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_EVENTS_SUBSCRIBE, "modeler", "admin")
+    ),
+) -> list[WebhookDelivery]:
+    """Return the delivery log of one subscription (audit / debugging)."""
+
+    _run_webhook(
+        lambda: _outbox.get_subscription(subscription_id)
+        or _raise_webhook_404(subscription_id)
+    )
+    return _outbox.deliveries(subscription_id)
+
+
+def _raise_webhook_404(subscription_id: str) -> object:
+    raise WebhookError(f"subscription '{subscription_id}' not found", 404)
+
+
+app.include_router(_v1)
+

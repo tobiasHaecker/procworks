@@ -32,7 +32,7 @@ import json
 import os
 from pathlib import Path
 
-from procworks.auth import ALL_ROLES, AuthError, Principal, bearer_token
+from procworks.auth import ALL_SCOPES, KNOWN_ROLES, AuthError, Principal, bearer_token
 
 
 def _digest(token: str) -> str:
@@ -57,10 +57,20 @@ class TokenAuthBackend:
         if not isinstance(raw_roles, (list, tuple)):
             raise ValueError(f"token entry '{subject}' has non-list 'roles'")
         roles = frozenset(str(r) for r in raw_roles)
-        unknown = roles - ALL_ROLES
+        unknown = roles - KNOWN_ROLES
         if unknown:
             raise ValueError(
                 f"token entry '{subject}' has unknown role(s): {sorted(unknown)}"
+            )
+        raw_scopes = entry.get("scopes", [])
+        if not isinstance(raw_scopes, (list, tuple)):
+            raise ValueError(f"token entry '{subject}' has non-list 'scopes'")
+        scopes = frozenset(str(s) for s in raw_scopes)
+        unknown_scopes = scopes - ALL_SCOPES
+        if unknown_scopes:
+            raise ValueError(
+                f"token entry '{subject}' has unknown scope(s): "
+                f"{sorted(unknown_scopes)}"
             )
         agent_id = entry.get("agent_id")
         if agent_id is not None and not isinstance(agent_id, str):
@@ -72,6 +82,7 @@ class TokenAuthBackend:
             subject=subject,
             agent_id=agent_id,
             roles=roles,
+            scopes=scopes,
             display_name=display_name,
         )
 

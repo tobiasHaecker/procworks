@@ -12,7 +12,16 @@ import os
 from collections.abc import Callable
 from typing import Protocol
 
-from procworks.model import OrgModel, ProcessInstance, ProcessSchema
+from procworks.model import (
+    ExternalTask,
+    Incident,
+    OrgModel,
+    OutboxEntry,
+    ProcessInstance,
+    ProcessSchema,
+    WebhookDelivery,
+    WebhookSubscription,
+)
 
 
 class SchemaStore(Protocol):
@@ -227,4 +236,169 @@ def dehydrate_org(schema: ProcessSchema) -> ProcessSchema:
     if schema.org_model_id is None:
         return schema
     return schema.model_copy(update={"org_model": OrgModel()})
+
+
+class ExternalTaskStore(Protocol):
+    """Persistence interface for external tasks and their incidents (E11).
+
+    Holds the outbound work queue: automatic ``EXTERNAL_TASK`` steps that have
+    been exposed to outside workers, plus the incidents raised when a task's
+    retries are exhausted. The runtime is agnostic of the backend, exactly like
+    the schema/instance stores.
+    """
+
+    def put(self, task: ExternalTask) -> ExternalTask: ...
+
+    def get(self, task_id: str) -> ExternalTask | None: ...
+
+    def list_tasks(self) -> list[ExternalTask]: ...
+
+    def put_incident(self, incident: Incident) -> Incident: ...
+
+    def get_incident(self, incident_id: str) -> Incident | None: ...
+
+    def list_incidents(self) -> list[Incident]: ...
+
+    def clear(self) -> None: ...
+
+
+class InMemoryExternalTaskStore:
+    """A dict-backed store of external tasks and incidents keyed by id.
+
+    The default store without configuration; with ``DATABASE_URL`` set,
+    ``create_external_task_store`` returns the durable SQLAlchemy variant
+    instead (mirroring the other stores).
+    """
+
+    def __init__(self) -> None:
+        self._tasks: dict[str, ExternalTask] = {}
+        self._incidents: dict[str, Incident] = {}
+
+    def put(self, task: ExternalTask) -> ExternalTask:
+        self._tasks[task.id] = task
+        return task
+
+    def get(self, task_id: str) -> ExternalTask | None:
+        return self._tasks.get(task_id)
+
+    def list_tasks(self) -> list[ExternalTask]:
+        return list(self._tasks.values())
+
+    def put_incident(self, incident: Incident) -> Incident:
+        self._incidents[incident.id] = incident
+        return incident
+
+    def get_incident(self, incident_id: str) -> Incident | None:
+        return self._incidents.get(incident_id)
+
+    def list_incidents(self) -> list[Incident]:
+        return list(self._incidents.values())
+
+    def clear(self) -> None:
+        self._tasks.clear()
+        self._incidents.clear()
+
+
+def create_external_task_store() -> ExternalTaskStore:
+    """Build the external-task store from the environment (mirrors the others)."""
+
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        from procworks.db import SqlAlchemyExternalTaskStore
+
+        return SqlAlchemyExternalTaskStore(url, create_tables=True)
+    return InMemoryExternalTaskStore()
+
+
+class WebhookStore(Protocol):
+    """Persistence for webhook subscriptions, the outbox and the delivery log (E13).
+
+    Backs the event side of the open API: tool subscriptions, the transactional
+    outbox of queued deliveries, and the append-only delivery log. The dispatcher
+    is agnostic of the backend, exactly like the other stores.
+    """
+
+    def put_subscription(self, sub: WebhookSubscription) -> WebhookSubscription: ...
+
+    def get_subscription(self, subscription_id: str) -> WebhookSubscription | None: ...
+
+    def list_subscriptions(self) -> list[WebhookSubscription]: ...
+
+    def delete_subscription(self, subscription_id: str) -> None: ...
+
+    def put_entry(self, entry: OutboxEntry) -> OutboxEntry: ...
+
+    def get_entry(self, entry_id: str) -> OutboxEntry | None: ...
+
+    def list_entries(self) -> list[OutboxEntry]: ...
+
+    def put_delivery(self, delivery: WebhookDelivery) -> WebhookDelivery: ...
+
+    def list_deliveries(self, subscription_id: str | None = None) -> list[WebhookDelivery]: ...
+
+    def clear(self) -> None: ...
+
+
+class InMemoryWebhookStore:
+    """A dict-backed store of subscriptions, outbox entries and deliveries.
+
+    The default store without configuration; with ``DATABASE_URL`` set,
+    ``create_webhook_store`` returns the durable SQLAlchemy variant instead
+    (mirroring the other stores).
+    """
+
+    def __init__(self) -> None:
+        self._subscriptions: dict[str, WebhookSubscription] = {}
+        self._entries: dict[str, OutboxEntry] = {}
+        self._deliveries: list[WebhookDelivery] = []
+
+    def put_subscription(self, sub: WebhookSubscription) -> WebhookSubscription:
+        self._subscriptions[sub.id] = sub
+        return sub
+
+    def get_subscription(self, subscription_id: str) -> WebhookSubscription | None:
+        return self._subscriptions.get(subscription_id)
+
+    def list_subscriptions(self) -> list[WebhookSubscription]:
+        return list(self._subscriptions.values())
+
+    def delete_subscription(self, subscription_id: str) -> None:
+        self._subscriptions.pop(subscription_id, None)
+
+    def put_entry(self, entry: OutboxEntry) -> OutboxEntry:
+        self._entries[entry.id] = entry
+        return entry
+
+    def get_entry(self, entry_id: str) -> OutboxEntry | None:
+        return self._entries.get(entry_id)
+
+    def list_entries(self) -> list[OutboxEntry]:
+        return list(self._entries.values())
+
+    def put_delivery(self, delivery: WebhookDelivery) -> WebhookDelivery:
+        self._deliveries.append(delivery)
+        return delivery
+
+    def list_deliveries(
+        self, subscription_id: str | None = None
+    ) -> list[WebhookDelivery]:
+        if subscription_id is None:
+            return list(self._deliveries)
+        return [d for d in self._deliveries if d.subscription_id == subscription_id]
+
+    def clear(self) -> None:
+        self._subscriptions.clear()
+        self._entries.clear()
+        self._deliveries.clear()
+
+
+def create_webhook_store() -> WebhookStore:
+    """Build the webhook store from the environment (mirrors the others)."""
+
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        from procworks.db import SqlAlchemyWebhookStore
+
+        return SqlAlchemyWebhookStore(url, create_tables=True)
+    return InMemoryWebhookStore()
 

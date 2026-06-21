@@ -21,6 +21,7 @@ from procworks.model import (
     AccessMode,
     ActivityTemplate,
     Agent,
+    AutomationKind,
     ConnectorDescriptor,
     ConnectorKind,
     ControlEdge,
@@ -1165,6 +1166,67 @@ def set_value_class(
             ]
         )
     node.value_class = value_class
+    return raise_if_invalid(candidate)
+
+
+def set_automation(
+    schema: ProcessSchema,
+    node_id: str,
+    automation: AutomationKind,
+    *,
+    topic: str | None = None,
+    endpoint_ref: str | None = None,
+    retry_max: int | None = None,
+    retry_backoff_ms: int | None = None,
+    request_timeout_ms: int | None = None,
+) -> ProcessSchema:
+    """Configure how an automatic ACTIVITY is driven by an external tool (E11).
+
+    requires: schema editable (R0); the node exists, is an ACTIVITY and already
+              carries a service binding (bind a service first via
+              ``assign_service``).
+    ensures:  the binding's ``automation`` and its topic/endpoint/retry settings
+              are set; for a non-``MANUAL_NONE`` kind ``automatic`` is forced
+              True so the step is never interactive; the integration rules
+              I1-I4 are re-checked, so an ill-formed or secret-bearing binding
+              is rejected (Correctness by Construction extends to integration).
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type is not NodeType.ACTIVITY:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="automation can only be set on ACTIVITY nodes",
+                )
+            ]
+        )
+    binding = candidate.service_bindings.get(node_id)
+    if binding is None:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="bind a service before configuring its automation",
+                )
+            ]
+        )
+    binding.automation = automation
+    binding.topic = topic
+    binding.endpoint_ref = endpoint_ref
+    if automation is not AutomationKind.MANUAL_NONE:
+        binding.automatic = True
+    if retry_max is not None:
+        binding.retry_max = retry_max
+    if retry_backoff_ms is not None:
+        binding.retry_backoff_ms = retry_backoff_ms
+    if request_timeout_ms is not None:
+        binding.request_timeout_ms = request_timeout_ms
     return raise_if_invalid(candidate)
 
 

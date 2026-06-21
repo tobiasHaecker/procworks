@@ -33,8 +33,38 @@ MODELER = "modeler"
 OPERATOR = "operator"
 VIEWER = "viewer"
 
-#: Every known role -- the open dev backend grants all of them.
+#: Machine role for external tools (integration concept, roadmap E10). A service
+#: token carrying this role may use the versioned ``/v1`` integration endpoints
+#: according to its :data:`scopes`; it is *not* granted to human/open principals.
+INTEGRATION = "integration"
+
+#: Every human role -- the open dev backend grants all of them (unchanged).
 ALL_ROLES: frozenset[str] = frozenset({ADMIN, MODELER, OPERATOR, VIEWER})
+
+#: Every role a configured token may legitimately carry (humans + integration).
+KNOWN_ROLES: frozenset[str] = ALL_ROLES | {INTEGRATION}
+
+#: Fine-grained integration scopes a service token may hold (additive). They
+#: only restrict :data:`INTEGRATION` identities; human roles are unaffected. The
+#: wildcard ``"*"`` grants every scope.
+SCOPE_INSTANCES_START = "instances:start"
+SCOPE_TASKS_COMPLETE = "tasks:complete"
+SCOPE_TASKS_FETCH = "tasks:fetch"
+SCOPE_DATA_READ = "data:read"
+SCOPE_DATA_WRITE = "data:write"
+SCOPE_EVENTS_SUBSCRIBE = "events:subscribe"
+SCOPE_WILDCARD = "*"
+ALL_SCOPES: frozenset[str] = frozenset(
+    {
+        SCOPE_INSTANCES_START,
+        SCOPE_TASKS_COMPLETE,
+        SCOPE_TASKS_FETCH,
+        SCOPE_DATA_READ,
+        SCOPE_DATA_WRITE,
+        SCOPE_EVENTS_SUBSCRIBE,
+        SCOPE_WILDCARD,
+    }
+)
 
 
 class AuthError(Exception):
@@ -58,6 +88,7 @@ class Principal(BaseModel):
     subject: str = Field(..., examples=["anna"])
     agent_id: str | None = Field(default=None, examples=["a1"])
     roles: frozenset[str] = Field(default_factory=frozenset)
+    scopes: frozenset[str] = Field(default_factory=frozenset)
     display_name: str | None = Field(default=None, examples=["Anna Beispiel"])
 
     @property

@@ -24,6 +24,7 @@ from procworks.model import (
     STAFF_LEAF_KINDS,
     WRITE_MODES,
     ActivityTemplate,
+    AutomationKind,
     DataSourceKind,
     FollowUpTrigger,
     LifecycleState,
@@ -62,15 +63,17 @@ def validate(
     schema: ProcessSchema, resolver: SchemaResolver | None = None
 ) -> list[ValidationFinding]:
     """Run structural rules K1-K3, data-flow D1-D4, resource rules Z1-Z4,
-    activity-repository rules A1-A3, composition rules H1-H4/F1-F4 and the
-    temporal rules T1-T2.
+    activity-repository rules A1-A3, composition rules H1-H4/F1-F4, the
+    integration rules I1-I4 and the temporal rules T1-T2.
 
     ``resolver`` enables the cross-schema composition checks (target must be
     RELEASED, type-conformant mappings, acyclic hierarchy). Without it only the
     local well-formedness of sub-process/follow-up references is checked.
 
-    The temporal rules T1-T2 are silent unless the schema carries temporal
-    annotations, so they never affect time-free models.
+    The integration rules I1-I4 are silent unless a service binding declares an
+    ``automation`` other than ``MANUAL_NONE``; the temporal rules T1-T2 are
+    silent unless the schema carries temporal annotations. Both groups never
+    affect integration-free / time-free models.
 
     Returns all findings (an empty list means the schema is correct).
     """
@@ -82,6 +85,7 @@ def validate(
     findings += _check_data_flow(schema)
     findings += _check_connectors(schema)
     findings += _check_resources(schema)
+    findings += _check_integration(schema)
     findings += _check_composition(schema, resolver)
     findings += _check_temporal(schema)
     return findings
@@ -822,6 +826,130 @@ def _check_template_interface(
                 )
             )
     return findings
+
+
+# --- I1-I4: integration bindings (automatic, tool-driven services) -------
+
+
+def _check_integration(schema: ProcessSchema) -> list[ValidationFinding]:
+    """Integration rules I1-I4 for automatic, tool-driven service bindings.
+
+    Silent unless a service binding sets ``automation`` to something other than
+    ``MANUAL_NONE`` -- a model without integration bindings produces no
+    findings, so the group is fully additive (like the temporal group).
+
+    * I1: the binding is well-formed -- ``EXTERNAL_TASK`` needs a non-empty
+      topic, ``HTTP_PUSH`` a non-empty endpoint reference.
+    * I2: automation is consistent -- an automated binding is marked
+      ``automatic`` and carries exactly one execution pattern (topic XOR
+      endpoint). The "no interactive staff rule" half is covered by Z4.
+    * I3: every parameter-mapping target references an existing data element
+      (the deeper written-before/type guarantees stay with D1/D3/A3).
+    * I4: the model carries no inline secrets -- topic/endpoint_ref are bare
+      references, never a credential-bearing URL.
+    """
+
+    findings: list[ValidationFinding] = []
+    for node_id, binding in schema.service_bindings.items():
+        if binding.automation is AutomationKind.MANUAL_NONE:
+            continue
+        findings += _check_integration_binding(schema, node_id, binding)
+    return findings
+
+
+def _check_integration_binding(
+    schema: ProcessSchema, node_id: str, binding: ServiceBinding
+) -> list[ValidationFinding]:
+    findings: list[ValidationFinding] = []
+    kind = binding.automation
+
+    # I1 + I2: the right execution pattern is present and is the only one.
+    if kind is AutomationKind.EXTERNAL_TASK:
+        if not (binding.topic or "").strip():
+            findings.append(
+                ValidationFinding(
+                    rule="I1",
+                    node_id=node_id,
+                    message="EXTERNAL_TASK binding requires a non-empty topic",
+                )
+            )
+        if binding.endpoint_ref is not None:
+            findings.append(
+                ValidationFinding(
+                    rule="I2",
+                    node_id=node_id,
+                    message="EXTERNAL_TASK binding must not set an endpoint_ref",
+                )
+            )
+    elif kind is AutomationKind.HTTP_PUSH:
+        if not (binding.endpoint_ref or "").strip():
+            findings.append(
+                ValidationFinding(
+                    rule="I1",
+                    node_id=node_id,
+                    message="HTTP_PUSH binding requires a non-empty endpoint_ref",
+                )
+            )
+        if binding.topic is not None:
+            findings.append(
+                ValidationFinding(
+                    rule="I2",
+                    node_id=node_id,
+                    message="HTTP_PUSH binding must not set a topic",
+                )
+            )
+
+    # I2: an automated binding is also flagged automatic (never interactive).
+    if not binding.automatic:
+        findings.append(
+            ValidationFinding(
+                rule="I2",
+                node_id=node_id,
+                message="automated binding must be marked automatic",
+            )
+        )
+
+    # I3: parameter-mapping targets must reference existing data elements.
+    for param, element_id in binding.parameter_mapping.items():
+        if element_id not in schema.data_elements:
+            findings.append(
+                ValidationFinding(
+                    rule="I3",
+                    node_id=node_id,
+                    message=(
+                        f"parameter '{param}' maps to unknown data element "
+                        f"'{element_id}'"
+                    ),
+                )
+            )
+
+    # I4: no inline secrets -- topic/endpoint_ref are bare references.
+    findings += _check_no_inline_secret(node_id, "topic", binding.topic)
+    findings += _check_no_inline_secret(
+        node_id, "endpoint_ref", binding.endpoint_ref
+    )
+    return findings
+
+
+def _check_no_inline_secret(
+    node_id: str, field: str, value: str | None
+) -> list[ValidationFinding]:
+    """I4: a reference field must not embed a URL scheme or credentials."""
+
+    if value is None:
+        return []
+    if "://" in value or "@" in value:
+        return [
+            ValidationFinding(
+                rule="I4",
+                node_id=node_id,
+                message=(
+                    f"{field} must be a bare reference without an inline URL or "
+                    f"credentials"
+                ),
+            )
+        ]
+    return []
 
 
 def _check_z2_resolvable(schema: ProcessSchema) -> list[ValidationFinding]:

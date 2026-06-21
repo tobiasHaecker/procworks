@@ -24,6 +24,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     Integer,
     String,
     create_engine,
@@ -36,7 +37,16 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from procworks.audit import AuditEvent, EventType
 from procworks.auth_password import User
-from procworks.model import OrgModel, ProcessInstance, ProcessSchema
+from procworks.model import (
+    ExternalTask,
+    Incident,
+    OrgModel,
+    OutboxEntry,
+    ProcessInstance,
+    ProcessSchema,
+    WebhookDelivery,
+    WebhookSubscription,
+)
 
 #: JSONB on PostgreSQL, generic JSON elsewhere (e.g. SQLite in tests).
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
@@ -395,6 +405,247 @@ class SqlAlchemyCredentialStore:
             if row is not None:
                 session.delete(row)
                 session.commit()
+
+
+class ExternalTaskRow(Base):
+    """One row per external task (outbound integration queue, roadmap E11)."""
+
+    __tablename__ = "external_task"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    topic: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    available_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    document: Mapped[dict[str, object]] = mapped_column(JsonDocument, nullable=False)
+
+
+class IncidentRow(Base):
+    """One row per raised incident (dead-letter of an exhausted task)."""
+
+    __tablename__ = "incident"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    external_task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    instance_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    document: Mapped[dict[str, object]] = mapped_column(JsonDocument, nullable=False)
+
+
+class SqlAlchemyExternalTaskStore:
+    """An external-task store backed by a SQLAlchemy engine.
+
+    Mirrors the other stores: each task/incident is a JSON document plus a few
+    queryable columns, and the runtime is agnostic of the backend.
+    """
+
+    def __init__(self, url: str, *, create_tables: bool = False) -> None:
+        self._engine = create_engine(url, future=True)
+        if create_tables:
+            Base.metadata.create_all(self._engine)
+
+    def put(self, task: ExternalTask) -> ExternalTask:
+        payload = task.model_dump(mode="json")
+        with Session(self._engine) as session:
+            row = session.get(ExternalTaskRow, task.id)
+            if row is None:
+                row = ExternalTaskRow(id=task.id)
+                session.add(row)
+            row.instance_id = task.instance_id
+            row.node_id = task.node_id
+            row.topic = task.topic
+            row.state = task.state.value
+            row.available_at = task.available_at
+            row.document = payload
+            session.commit()
+        return task
+
+    def get(self, task_id: str) -> ExternalTask | None:
+        with Session(self._engine) as session:
+            row = session.get(ExternalTaskRow, task_id)
+            if row is None:
+                return None
+            return ExternalTask.model_validate(row.document)
+
+    def list_tasks(self) -> list[ExternalTask]:
+        with Session(self._engine) as session:
+            rows = session.scalars(select(ExternalTaskRow))
+            return [ExternalTask.model_validate(row.document) for row in rows]
+
+    def put_incident(self, incident: Incident) -> Incident:
+        payload = incident.model_dump(mode="json")
+        with Session(self._engine) as session:
+            row = session.get(IncidentRow, incident.id)
+            if row is None:
+                row = IncidentRow(id=incident.id)
+                session.add(row)
+            row.external_task_id = incident.external_task_id
+            row.instance_id = incident.instance_id
+            row.resolved = incident.resolved
+            row.document = payload
+            session.commit()
+        return incident
+
+    def get_incident(self, incident_id: str) -> Incident | None:
+        with Session(self._engine) as session:
+            row = session.get(IncidentRow, incident_id)
+            if row is None:
+                return None
+            return Incident.model_validate(row.document)
+
+    def list_incidents(self) -> list[Incident]:
+        with Session(self._engine) as session:
+            rows = session.scalars(select(IncidentRow))
+            return [Incident.model_validate(row.document) for row in rows]
+
+    def clear(self) -> None:
+        with Session(self._engine) as session:
+            session.execute(delete(ExternalTaskRow))
+            session.execute(delete(IncidentRow))
+            session.commit()
+
+
+class WebhookSubscriptionRow(Base):
+    """One row per webhook subscription (event side of the open API, E13)."""
+
+    __tablename__ = "webhook_subscription"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    document: Mapped[dict[str, object]] = mapped_column(JsonDocument, nullable=False)
+
+
+class OutboxEntryRow(Base):
+    """One row per queued webhook delivery (transactional outbox, E13)."""
+
+    __tablename__ = "webhook_outbox"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    subscription_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    next_attempt_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    document: Mapped[dict[str, object]] = mapped_column(JsonDocument, nullable=False)
+
+
+class WebhookDeliveryRow(Base):
+    """One row per delivery attempt (append-only delivery log, E13)."""
+
+    __tablename__ = "webhook_delivery"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    subscription_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    outbox_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    document: Mapped[dict[str, object]] = mapped_column(JsonDocument, nullable=False)
+
+
+class SqlAlchemyWebhookStore:
+    """A webhook store backed by a SQLAlchemy engine.
+
+    Mirrors the other stores: subscriptions, outbox entries and deliveries are
+    each a JSON document plus a few queryable columns, and the dispatcher is
+    agnostic of the backend.
+    """
+
+    def __init__(self, url: str, *, create_tables: bool = False) -> None:
+        self._engine = create_engine(url, future=True)
+        if create_tables:
+            Base.metadata.create_all(self._engine)
+
+    def put_subscription(self, sub: WebhookSubscription) -> WebhookSubscription:
+        payload = sub.model_dump(mode="json")
+        with Session(self._engine) as session:
+            row = session.get(WebhookSubscriptionRow, sub.id)
+            if row is None:
+                row = WebhookSubscriptionRow(id=sub.id)
+                session.add(row)
+            row.url = sub.url
+            row.active = sub.active
+            row.document = payload
+            session.commit()
+        return sub
+
+    def get_subscription(self, subscription_id: str) -> WebhookSubscription | None:
+        with Session(self._engine) as session:
+            row = session.get(WebhookSubscriptionRow, subscription_id)
+            if row is None:
+                return None
+            return WebhookSubscription.model_validate(row.document)
+
+    def list_subscriptions(self) -> list[WebhookSubscription]:
+        with Session(self._engine) as session:
+            rows = session.scalars(select(WebhookSubscriptionRow))
+            return [WebhookSubscription.model_validate(row.document) for row in rows]
+
+    def delete_subscription(self, subscription_id: str) -> None:
+        with Session(self._engine) as session:
+            row = session.get(WebhookSubscriptionRow, subscription_id)
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    def put_entry(self, entry: OutboxEntry) -> OutboxEntry:
+        payload = entry.model_dump(mode="json")
+        with Session(self._engine) as session:
+            row = session.get(OutboxEntryRow, entry.id)
+            if row is None:
+                row = OutboxEntryRow(id=entry.id)
+                session.add(row)
+            row.subscription_id = entry.subscription_id
+            row.event_type = entry.event_type
+            row.state = entry.state.value
+            row.next_attempt_at = entry.next_attempt_at
+            row.document = payload
+            session.commit()
+        return entry
+
+    def get_entry(self, entry_id: str) -> OutboxEntry | None:
+        with Session(self._engine) as session:
+            row = session.get(OutboxEntryRow, entry_id)
+            if row is None:
+                return None
+            return OutboxEntry.model_validate(row.document)
+
+    def list_entries(self) -> list[OutboxEntry]:
+        with Session(self._engine) as session:
+            rows = session.scalars(select(OutboxEntryRow))
+            return [OutboxEntry.model_validate(row.document) for row in rows]
+
+    def put_delivery(self, delivery: WebhookDelivery) -> WebhookDelivery:
+        payload = delivery.model_dump(mode="json")
+        with Session(self._engine) as session:
+            row = session.get(WebhookDeliveryRow, delivery.id)
+            if row is None:
+                row = WebhookDeliveryRow(id=delivery.id)
+                session.add(row)
+            row.subscription_id = delivery.subscription_id
+            row.outbox_id = delivery.outbox_id
+            row.at = delivery.at
+            row.document = payload
+            session.commit()
+        return delivery
+
+    def list_deliveries(
+        self, subscription_id: str | None = None
+    ) -> list[WebhookDelivery]:
+        with Session(self._engine) as session:
+            stmt = select(WebhookDeliveryRow).order_by(WebhookDeliveryRow.at)
+            if subscription_id is not None:
+                stmt = stmt.where(
+                    WebhookDeliveryRow.subscription_id == subscription_id
+                )
+            rows = session.scalars(stmt)
+            return [WebhookDelivery.model_validate(row.document) for row in rows]
+
+    def clear(self) -> None:
+        with Session(self._engine) as session:
+            session.execute(delete(WebhookDeliveryRow))
+            session.execute(delete(OutboxEntryRow))
+            session.execute(delete(WebhookSubscriptionRow))
+            session.commit()
 
 
 

@@ -57,6 +57,9 @@ const state = {
   // Last seen runtime-event revision (GET /monitoring/revision). Drives the
   // live auto-refresh of the task/monitoring/run views; not persisted.
   revision: 0,
+  // Last connection-test outcome per connector id (ok/err/unknown), shown as a
+  // status badge in the integration view. Purely a UI hint; not persisted.
+  connectorStatus: {},
 };
 
 const NODE_TYPE = {
@@ -69,6 +72,11 @@ const GATEWAYS = new Set([
 ]);
 const DATA_TYPES = ["INTEGER", "FLOAT", "STRING", "DATE", "BOOLEAN", "URI"];
 const CONNECTOR_KINDS = ["MS_SQL", "MYSQL", "DYNAMICS_365", "SAP", "CUSTOM"];
+// Domain events a webhook may subscribe to (mirrors outbox.WEBHOOK_EVENTS). The
+// server validates the selection; this list only drives the checkbox picker.
+const WEBHOOK_EVENT_TYPES = [
+  "instance.started", "instance.completed", "task.ready", "task.completed", "task.incident",
+];
 
 // --------------------------------------------------------------------------
 // DOM-Helfer
@@ -1512,6 +1520,30 @@ async function viewMonitor() {
           el("button", { class: "btn danger", onClick: () => confirmReset(false) }, "Auf Null zur\u00FCcksetzen")))));
   }
 
+  // Inzidente externer Aufgaben (Integrations-Konzept 11.5). Sichtbar fuer alle
+  // Monitoring-Leser; "Erneut versuchen" (Aufloesen + Wiedereinreihen) ist nur
+  // fuer Bearbeiter/Administratoren freigeschaltet (tasks:complete).
+  let incidents = [];
+  try { incidents = await api.get("/v1/incidents?unresolved_only=true"); }
+  catch (e) { /* ignore: integration runtime may be disabled */ }
+  const canResolve = hasRole("operator", "admin");
+  const incBody = el("div", { class: "panel-b" });
+  if (!incidents.length) {
+    incBody.appendChild(el("div", { class: "ok-banner" }, "\u2713 Keine offenen Inzidente externer Aufgaben."));
+  } else {
+    const incRows = incidents.map((inc) => {
+      const action = canResolve
+        ? el("button", { class: "btn small green", onClick: () => resolveIncident(inc) }, "Erneut versuchen")
+        : el("span", { class: "muted" }, "\u2013");
+      return [inc.node_id, inc.message, fmtTimestamp(new Date(inc.created_at * 1000).toISOString()), action];
+    });
+    incBody.appendChild(table(["Schritt", "Fehler", "Zeit", ""], incRows));
+  }
+  content.appendChild(el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Inzidente (externe Aufgaben)"),
+      el("span", { class: "sub" }, "Topic-Fehler \u00B7 Aufl\u00F6sen reiht die Aufgabe erneut ein")),
+    incBody));
+
   if (state.instance) {
     const detail = el("div");
     // Schema der Instanz laden, damit der Graph passt
@@ -1569,6 +1601,15 @@ async function runReset(loadDemo) {
 
 function statePillFor(s) {
   return el("span", { class: "pill " + (s === "COMPLETED" ? "pill-green" : "pill-blue") }, s);
+}
+
+// Inzident eines externen Tasks aufloesen (Aufgabe wird erneut eingereiht).
+async function resolveIncident(inc) {
+  try {
+    await api.post(`/v1/incidents/${inc.id}/resolve`);
+    render();
+    toast("ok", "Inzident aufgel\u00F6st", ["Aufgabe erneut eingereiht."]);
+  } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
 }
 
 // Audit-/Monitoring-Hilfen (Schritt 15)
@@ -1670,6 +1711,328 @@ async function completeTask(task, agentId) {
 }
 
 // --------------------------------------------------------------------------
+// View: Integration (Integrations-Konzept Abschnitt 11 / Roadmap P5)
+// --------------------------------------------------------------------------
+//
+// Wie der ganze Client traegt diese Sicht KEINE Korrektheitslogik: sie ruft
+// nur gepruefte Endpunkte (Connectoren, Datenanbindung, Automatik, Webhooks).
+// Validitaet ist eine Eigenschaft des Serverzustands; ungueltige Eingaben
+// weist der Kern mit 422 ab und wir zeigen den Befund als Toast.
+
+async function viewIntegration() {
+  const content = byId("content");
+  clear(content);
+  // Connectoren + Webhooks parallel laden (unabhaengige Endpunkte).
+  const [connPanel, hookPanel] = await Promise.all([
+    connectorRegistryPanel(),
+    webhookPanel(),
+  ]);
+  content.appendChild(connPanel);          // 11.1
+  content.appendChild(dataBindingPanel()); // 11.2
+  content.appendChild(automationPanel());  // 11.3
+  content.appendChild(hookPanel);          // 11.4
+}
+
+// --- 11.1 Connector-Registry ----------------------------------------------
+
+async function connectorRegistryPanel() {
+  let connectors = [];
+  try { connectors = await api.get("/v1/connectors"); }
+  catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
+  const rows = connectors.map((c) => {
+    const st = state.connectorStatus[c.connector_id] || "unknown";
+    const pill = el("span", { class: "pill " + (st === "ok" ? "pill-green" : st === "err" ? "pill-red" : "pill-gray") },
+      st === "ok" ? "verbunden" : st === "err" ? "Fehler" : "ungepr\u00FCft");
+    const testBtn = el("button", { class: "btn small", onClick: () => testConnector(c.connector_id) }, "Verbindung testen");
+    const readBtn = el("button", { class: "btn small ghost", onClick: () => sampleReadConnector(c.connector_id) }, "Testlesen");
+    return [c.connector_id, el("span", { class: "pill pill-blue" }, c.kind), pill,
+      el("div", { class: "row-actions" }, testBtn, readBtn)];
+  });
+  const body = el("div", { class: "panel-b" },
+    connectors.length
+      ? table(["Connector", "Typ", "Status", ""], rows)
+      : emptyState("Keine Connectoren konfiguriert. Connectoren werden serverseitig (admin-only) eingerichtet \u2013 Zugangsdaten bleiben dort, niemals im Modell."),
+    el("p", { class: "muted", style: "margin-top:10px" },
+      "Zugangsdaten werden nie angezeigt oder abgefragt. Die Modellierung referenziert nur eine serverseitig aufgel\u00F6ste Secret-Referenz."));
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Connector-Registry"), el("span", { class: "sub" }, "Externe Datensysteme \u00B7 nur Metadaten")),
+    body);
+}
+
+async function testConnector(id) {
+  try {
+    const res = await api.post(`/v1/connectors/${id}/test`);
+    state.connectorStatus[id] = res.ok ? "ok" : "err";
+    toast(res.ok ? "ok" : "err", res.ok ? "Verbindung ok" : "Verbindung fehlgeschlagen", [id]);
+  } catch (err) {
+    state.connectorStatus[id] = "err";
+    const d = describeError(err); toast("err", d.title, d.lines);
+  }
+  render();
+}
+
+function sampleReadConnector(id) {
+  const entity = el("input", { type: "text", placeholder: "z. B. Kunde" });
+  const limit = el("input", { type: "number", value: "1", min: "1", max: "100" });
+  openModal("Testlesen \u2013 " + id, el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Entit\u00E4t/Tabelle", entity),
+    el("label", { class: "field" }, "Anzahl", limit)), async () => {
+    if (!entity.value.trim()) return false;
+    try {
+      const rows = await api.post(`/v1/connectors/${id}/sample-read`,
+        { entity: entity.value.trim(), limit: Number(limit.value) || 1 });
+      showSampleRecords(entity.value.trim(), rows);
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Lesen");
+}
+
+function showSampleRecords(entity, rows) {
+  const pre = el("pre", { class: "code-block" }, JSON.stringify(rows, null, 2));
+  openModal(`Beispieldatensatz: ${entity} (${rows.length})`, pre, async () => true, "Schlie\u00DFen");
+}
+
+// --- 11.2 Datenanbindungs-Assistent ---------------------------------------
+
+function elemName(schema, id) {
+  const e = schema.data_elements[id];
+  return e ? e.name : id;
+}
+
+function dataBindingPanel() {
+  const head = el("div", { class: "panel-h" },
+    el("h2", null, "Datenanbindung (extern)"),
+    el("span", { class: "sub" }, "Datenelemente an Connectoren binden (C1\u2013C3)"));
+  if (!state.schema) {
+    return el("div", { class: "panel" }, head,
+      el("div", { class: "panel-b" }, emptyState("Kein Schema ausgew\u00E4hlt \u2013 oben ein Schema w\u00E4hlen.")));
+  }
+  const schema = state.schema;
+  const draft = isDraft(schema);
+
+  // Modell-Connectoren (Metadaten im Schema, getrennt von der Laufzeit-Registry).
+  const connRows = Object.values(schema.connectors || {}).map((c) =>
+    [c.name, el("span", { class: "pill pill-blue" }, c.kind), c.id]);
+  const addConnBtn = el("button", { class: "btn small", onClick: registerSchemaConnector, disabled: !draft }, "+ Connector");
+  const connBlock = el("div", null,
+    el("div", { class: "sub-h" }, el("h3", null, "Modell-Connectoren"), el("span", { class: "spacer", style: "flex:1" }), addConnBtn),
+    connRows.length ? table(["Name", "Typ", "ID"], connRows)
+      : emptyState("Noch keine Connectoren im Modell registriert."));
+
+  // Datenelemente + externe Bindung.
+  const hasConn = Object.keys(schema.connectors || {}).length > 0;
+  const elemRows = Object.values(schema.data_elements).map((d) => {
+    const src = d.source === "EXTERNAL"
+      ? el("span", { class: "pill pill-amber" }, "EXTERN")
+      : el("span", { class: "pill pill-gray" }, "Instanz");
+    const detail = d.external
+      ? `${d.external.connector_id} \u00B7 ${d.external.entity} \u00B7 Schl\u00FCssel ${elemName(schema, d.external.key_element_id)}`
+      : "\u2013";
+    const bindBtn = el("button", { class: "btn small ghost", onClick: () => bindExternalElement(d), disabled: !draft || !hasConn }, "Extern anbinden");
+    return [d.name, d.data_type, src, detail, bindBtn];
+  });
+  const elemBlock = el("div", null,
+    el("div", { class: "sub-h" }, el("h3", null, "Datenelemente")),
+    elemRows.length ? table(["Element", "Typ", "Quelle", "Abbildung", ""], elemRows)
+      : emptyState("Noch keine Datenelemente. Lege sie in der Datensicht an."));
+
+  return el("div", { class: "panel" }, head,
+    el("div", { class: "panel-b" }, connBlock, el("div", { style: "height:14px" }), elemBlock,
+      el("p", { class: "muted", style: "margin-top:10px" },
+        "Lese-/Schreib-Richtung (D/C) wird \u00FCber die Bindungen in der Datensicht festgelegt.")));
+}
+
+function registerSchemaConnector() {
+  const name = el("input", { type: "text", placeholder: "z. B. ERP-Kunden" });
+  const kind = el("select", null, ...CONNECTOR_KINDS.map((k) => el("option", { value: k }, k)));
+  const cid = el("input", { type: "text", placeholder: "optionale ID, z. B. erp" });
+  openModal("Connector registrieren", el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Name", name),
+    el("label", { class: "field" }, "Typ", kind),
+    el("label", { class: "field" }, "ID (optional)", cid)), async () => {
+    if (!name.value.trim()) return false;
+    try {
+      await api.post(`/schemas/${state.schemaId}/connectors`,
+        { name: name.value.trim(), kind: kind.value, connector_id: cid.value.trim() || null });
+      await refreshSchema(); render(); toast("ok", "Connector registriert");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Registrieren");
+}
+
+function bindExternalElement(element) {
+  const schema = state.schema;
+  const conn = el("select", null, ...Object.values(schema.connectors || {}).map((c) =>
+    el("option", { value: c.id }, `${c.name} (${c.id})`)));
+  const entity = el("input", { type: "text", placeholder: "z. B. Kunde" });
+  const keyElems = Object.values(schema.data_elements).filter((d) => d.source !== "EXTERNAL" && d.id !== element.id);
+  const key = el("select", null, ...keyElems.map((d) => el("option", { value: d.id }, d.name)));
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Connector", conn),
+    el("label", { class: "field" }, "Entit\u00E4t/Tabelle", entity),
+    el("label", { class: "field" }, "Schl\u00FCssel-Datenelement", keyElems.length
+      ? key
+      : el("span", { class: "muted" }, "Erst ein Instanz-Datenelement anlegen.")));
+  openModal(`Extern anbinden \u2013 ${element.name}`, body, async () => {
+    if (!entity.value.trim() || !conn.value || !keyElems.length) return false;
+    try {
+      await api.post(`/schemas/${state.schemaId}/data-elements/${element.id}/external`,
+        { connector_id: conn.value, entity: entity.value.trim(), key_element_id: key.value });
+      await refreshSchema(); render(); toast("ok", "Datenelement extern angebunden");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Anbinden");
+}
+
+// --- 11.3 Automatik-Schritt-Binding ---------------------------------------
+
+function automationPanel() {
+  const head = el("div", { class: "panel-h" },
+    el("h2", null, "Automatik-Schritte"),
+    el("span", { class: "sub" }, "Person / Automatisch (External-Task \u00B7 HTTP-Push)"));
+  if (!state.schema) {
+    return el("div", { class: "panel" }, head,
+      el("div", { class: "panel-b" }, emptyState("Kein Schema ausgew\u00E4hlt.")));
+  }
+  const schema = state.schema;
+  const draft = isDraft(schema);
+  const acts = activitiesOf(schema);
+  const rows = acts.map((n) => {
+    const sb = (schema.service_bindings || {})[n.id];
+    const auto = sb ? sb.automation : "MANUAL_NONE";
+    const detail = auto === "EXTERNAL_TASK" ? `External-Task \u00B7 Topic ${sb.topic || "?"}`
+      : auto === "HTTP_PUSH" ? `HTTP-Push \u00B7 ${sb.endpoint_ref || "?"}`
+      : "Person / manuell";
+    const pill = el("span", { class: "pill " + (auto === "MANUAL_NONE" ? "pill-gray" : "pill-green") },
+      auto === "MANUAL_NONE" ? "manuell" : "automatisch");
+    const btn = sb
+      ? el("button", { class: "btn small", onClick: () => editAutomation(n, sb), disabled: !draft }, "Bearbeitung w\u00E4hlen")
+      : el("span", { class: "muted" }, "erst Dienst zuweisen");
+    return [nodeCaption(n), pill, detail, btn];
+  });
+  const body = el("div", { class: "panel-b" },
+    acts.length ? table(["Aktivit\u00E4t", "Modus", "Anbindung", ""], rows)
+      : emptyState("Keine Aktivit\u00E4ten im Schema."));
+  return el("div", { class: "panel" }, head, body);
+}
+
+function editAutomation(node, sb) {
+  const kindSel = el("select", null,
+    el("option", { value: "MANUAL_NONE" }, "Person / manuell"),
+    el("option", { value: "EXTERNAL_TASK" }, "Automatisch \u00B7 External-Task (Topic)"),
+    el("option", { value: "HTTP_PUSH" }, "Automatisch \u00B7 HTTP-Push (Ziel)"));
+  kindSel.value = sb.automation || "MANUAL_NONE";
+  const topic = el("input", { type: "text", placeholder: "z. B. invoice-check", value: sb.topic || "" });
+  const endpoint = el("input", { type: "text", placeholder: "z. B. webhook_1", value: sb.endpoint_ref || "" });
+  const retryMax = el("input", { type: "number", min: "0", value: String(sb.retry_max != null ? sb.retry_max : 5) });
+  const backoff = el("input", { type: "number", min: "0", value: String(sb.retry_backoff_ms != null ? sb.retry_backoff_ms : 2000) });
+  const timeout = el("input", { type: "number", min: "0", value: String(sb.request_timeout_ms != null ? sb.request_timeout_ms : 30000) });
+  const topicField = el("label", { class: "field" }, "Topic", topic);
+  const endpointField = el("label", { class: "field" }, "Endpunkt-Referenz", endpoint);
+  const advanced = el("details", { class: "adv-block" }, el("summary", null, "Erweitert (Robustheit)"),
+    el("div", { class: "form-grid" },
+      el("label", { class: "field" }, "Max. Versuche", retryMax),
+      el("label", { class: "field" }, "Backoff (ms)", backoff),
+      el("label", { class: "field" }, "Timeout (ms)", timeout)));
+  const syncFields = () => {
+    const k = kindSel.value;
+    topicField.style.display = k === "EXTERNAL_TASK" ? "" : "none";
+    endpointField.style.display = k === "HTTP_PUSH" ? "" : "none";
+    advanced.style.display = k === "MANUAL_NONE" ? "none" : "";
+  };
+  kindSel.addEventListener("change", syncFields);
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Bearbeitung", kindSel), topicField, endpointField, advanced);
+  syncFields();
+  openModal(`Automatik \u2013 ${nodeCaption(node)}`, body, async () => {
+    const k = kindSel.value;
+    const req = { node_id: node.id, automation: k };
+    if (k === "EXTERNAL_TASK") { if (!topic.value.trim()) return false; req.topic = topic.value.trim(); }
+    if (k === "HTTP_PUSH") { if (!endpoint.value.trim()) return false; req.endpoint_ref = endpoint.value.trim(); }
+    if (k !== "MANUAL_NONE") {
+      req.retry_max = Number(retryMax.value);
+      req.retry_backoff_ms = Number(backoff.value);
+      req.request_timeout_ms = Number(timeout.value);
+    }
+    try {
+      await api.post(`/schemas/${state.schemaId}/automation`, req);
+      await refreshSchema(); render(); toast("ok", "Automatik gesetzt");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "\u00DCbernehmen");
+}
+
+// --- 11.4 Webhook-/Ereignis-Panel -----------------------------------------
+
+async function webhookPanel() {
+  let subs = [];
+  try { subs = await api.get("/v1/webhooks"); }
+  catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
+  const rows = subs.map((s) => {
+    const events = (s.events || []).join(", ");
+    const test = el("button", { class: "btn small", onClick: () => testWebhook(s.id) }, "Testzustellung");
+    const log = el("button", { class: "btn small ghost", onClick: () => showDeliveries(s.id) }, "Protokoll");
+    const del = el("button", { class: "btn small danger", onClick: () => deleteWebhook(s) }, "L\u00F6schen");
+    return [s.url, events, s.secret_ref || "\u2013", el("div", { class: "row-actions" }, test, log, del)];
+  });
+  const addBtn = el("button", { class: "btn small", onClick: addWebhook }, "+ Abonnement");
+  const body = el("div", { class: "panel-b" },
+    subs.length ? table(["Ziel-URL", "Ereignisse", "Secret-Ref", ""], rows)
+      : emptyState("Noch keine Webhook-Abonnements."));
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Webhooks / Ereignisse"), el("span", { class: "spacer", style: "flex:1" }), addBtn),
+    body);
+}
+
+function addWebhook() {
+  const url = el("input", { type: "url", placeholder: "https://hooks.example.com/procworks" });
+  const secret = el("input", { type: "text", placeholder: "z. B. WEBHOOK_SECRET (optional)" });
+  const checks = WEBHOOK_EVENT_TYPES.map((ev) => {
+    const cb = el("input", { type: "checkbox", value: ev });
+    return { cb, row: el("label", { class: "check-row" }, cb, " " + ev) };
+  });
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Ziel-URL", url),
+    el("label", { class: "field" }, "Secret-Referenz (Servername, optional)", secret),
+    el("div", { class: "field" }, el("span", null, "Ereignisse"),
+      el("div", { class: "check-list" }, ...checks.map((c) => c.row))));
+  openModal("Webhook-Abonnement", body, async () => {
+    const events = checks.filter((c) => c.cb.checked).map((c) => c.cb.value);
+    if (!url.value.trim() || !events.length) return false;
+    try {
+      await api.post("/v1/webhooks", { url: url.value.trim(), events, secret_ref: secret.value.trim() });
+      render(); toast("ok", "Webhook angelegt");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Anlegen");
+}
+
+async function testWebhook(id) {
+  try {
+    const d = await api.post(`/v1/webhooks/${id}/test`);
+    const detail = d.status_code != null ? "HTTP " + d.status_code : (d.error || "");
+    toast(d.ok ? "ok" : "err", d.ok ? "Testzustellung erfolgreich" : "Testzustellung fehlgeschlagen", detail ? [detail] : []);
+  } catch (err) { const e = describeError(err); toast("err", e.title, e.lines); }
+}
+
+async function showDeliveries(id) {
+  let deliveries = [];
+  try { deliveries = await api.get(`/v1/webhooks/${id}/deliveries`); }
+  catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return; }
+  const rows = deliveries.map((d) => [
+    fmtTimestamp(new Date(d.at * 1000).toISOString()),
+    d.event_type, String(d.attempt),
+    d.ok ? el("span", { class: "pill pill-green" }, "ok") : el("span", { class: "pill pill-red" }, "Fehler"),
+    d.status_code != null ? "HTTP " + d.status_code : (d.error || "\u2013"),
+  ]);
+  const body = rows.length ? table(["Zeit", "Ereignis", "Versuch", "Status", "Detail"], rows)
+    : emptyState("Noch keine Zustellungen.");
+  openModal("Zustellprotokoll", body, async () => true, "Schlie\u00DFen");
+}
+
+function deleteWebhook(sub) {
+  openModal("Webhook l\u00F6schen", el("p", { class: "muted" }, `Abonnement f\u00FCr ${sub.url} entfernen?`), async () => {
+    try { await api.del(`/v1/webhooks/${sub.id}`); render(); toast("ok", "Webhook gel\u00F6scht"); }
+    catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "L\u00F6schen");
+}
+
+// --------------------------------------------------------------------------
 // Wiederverwendbare UI-Bausteine
 // --------------------------------------------------------------------------
 
@@ -1700,6 +2063,7 @@ const VIEW_META = {
   run: { title: "Ausf\u00FChrung", sub: "Instanzen starten und Arbeitsliste abarbeiten", fn: viewRun },
   tasks: { title: "Meine Aufgaben", sub: "Bearbeiter-Aufgabenliste mit Z-Laufzeitaufl\u00F6sung", fn: viewTasks },
   monitor: { title: "Monitoring", sub: "Live-Status aktiver Instanzen", fn: viewMonitor },
+  integration: { title: "Integration", sub: "Connectoren, Datenanbindung, Automatik & Webhooks", fn: viewIntegration },
 };
 
 function setActiveNav() {
@@ -1720,6 +2084,7 @@ const VIEW_ROLES = {
   run: ["operator", "modeler", "admin"],
   tasks: ["operator", "modeler", "admin"],
   monitor: ["viewer", "operator", "modeler", "admin"],
+  integration: ["modeler", "admin"],
 };
 
 function currentRoles() {

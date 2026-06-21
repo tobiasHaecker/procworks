@@ -131,6 +131,26 @@ READ_MODES = frozenset({AccessMode.READ, AccessMode.READ_WRITE})
 WRITE_MODES = frozenset({AccessMode.WRITE, AccessMode.READ_WRITE})
 
 
+def value_matches_type(data_type: DataType, value: object) -> bool:
+    """Return whether ``value`` is a valid runtime value for ``data_type``.
+
+    A boundary type check (runtime D3) shared by the inbound data-write API and
+    the external-task runtime: JSON carries no schema types, so values handed in
+    from the outside are validated against the declared :class:`DataType` before
+    they reach the pure engine. ``bool`` is excluded from the numeric types
+    because in Python ``bool`` is a subclass of ``int``.
+    """
+
+    if data_type is DataType.INTEGER:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if data_type is DataType.FLOAT:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if data_type is DataType.BOOLEAN:
+        return isinstance(value, bool)
+    # STRING, DATE and URI are all carried as strings over the wire.
+    return isinstance(value, str)
+
+
 class NodeState(StrEnum):
     """Runtime node marking (NS) of a process instance (Section 4 / step 8)."""
 
@@ -433,6 +453,21 @@ class ActivityTemplate(BaseModel):
         return self.executor is not ExecutorKind.MANUAL
 
 
+class AutomationKind(StrEnum):
+    """How an automatic ACTIVITY is driven by an external tool (roadmap E11).
+
+    ``MANUAL_NONE`` (default) keeps the historical behaviour: the step is either
+    interactive or completed through the regular API. ``EXTERNAL_TASK`` exposes
+    the activated step as an external task an outside *worker* pulls (fetch-and-
+    lock); ``HTTP_PUSH`` makes ProcWorks call a server-side endpoint reference.
+    The integration rules I1-I4 keep the binding well-formed and secret-free.
+    """
+
+    MANUAL_NONE = "MANUAL_NONE"
+    EXTERNAL_TASK = "EXTERNAL_TASK"
+    HTTP_PUSH = "HTTP_PUSH"
+
+
 class ServiceBinding(BaseModel):
     """The executing service (ActivityTemplate) bound to an ACTIVITY node.
 
@@ -441,6 +476,12 @@ class ServiceBinding(BaseModel):
     ``template_id`` references a repository template, ``parameter_mapping``
     maps each template parameter name to a schema data-element id, and the
     binding is checked against the template interface (A1-A3).
+
+    The integration fields (roadmap E11) drive an automatic step from the
+    integration boundary. ``automation`` defaults to ``MANUAL_NONE`` so existing
+    schemas are unchanged; ``EXTERNAL_TASK`` uses ``topic`` (pull),
+    ``HTTP_PUSH`` uses ``endpoint_ref`` (push). They are validated by I1-I4 and
+    never carry secrets (only references).
     """
 
     node_id: str
@@ -448,6 +489,12 @@ class ServiceBinding(BaseModel):
     automatic: bool = False
     template_id: str | None = None
     parameter_mapping: dict[str, str] = Field(default_factory=dict)
+    automation: AutomationKind = AutomationKind.MANUAL_NONE
+    topic: str | None = None
+    endpoint_ref: str | None = None
+    retry_max: int = 5
+    retry_backoff_ms: int = 2000
+    request_timeout_ms: int = 30000
 
 
 # --- composition: sub-processes and follow-up links (H1-H4, F1-F3) --------
@@ -614,3 +661,132 @@ class ProcessInstance(BaseModel):
     #: a modeller/admin. Test instances are excluded from monitoring KPIs (no
     #: audit events are recorded for them) and flagged as such in the UI.
     is_test: bool = False
+
+
+# --- integration runtime entities (roadmap E10-E13) ----------------------
+# These carry no schema/correctness weight; they are persisted server-side by
+# the integration boundary (the external-task runtime and the webhook outbox
+# added in the later phases). They live here so the data model stays in one
+# place; the validator never inspects them.
+
+
+class ExternalTaskState(StrEnum):
+    """Lifecycle state of an external task (roadmap E11)."""
+
+    CREATED = "CREATED"
+    LOCKED = "LOCKED"
+    COMPLETED = "COMPLETED"
+    INCIDENT = "INCIDENT"
+    BPMN_ERROR = "BPMN_ERROR"
+
+
+class ExternalTask(BaseModel):
+    """An automatic activity exposed to an external worker (roadmap E11).
+
+    Created when an automatic ``EXTERNAL_TASK`` step is activated; an outside
+    worker fetches and locks it, then reports completion/failure. The
+    ``instance_revision_guard`` makes the completion idempotent -- it is applied
+    at most once even under at-least-once delivery (rule I5).
+    """
+
+    id: str
+    instance_id: str
+    node_id: str
+    topic: str
+    state: ExternalTaskState = ExternalTaskState.CREATED
+    worker_id: str | None = None
+    lock_expires_at: float | None = None
+    #: Earliest wall-clock time (epoch seconds) at which a CREATED task may be
+    #: fetched again. Set by a failure with retries remaining (backoff); ``None``
+    #: means immediately available.
+    available_at: float | None = None
+    retries_left: int = 5
+    input_variables: dict[str, object] = Field(default_factory=dict)
+    priority: PriorityLevel = PriorityLevel.MEDIUM
+    instance_revision_guard: int = 0
+    #: BPMN error code reported by the worker (state ``BPMN_ERROR``); ``None``
+    #: otherwise.
+    error_code: str | None = None
+
+
+class Incident(BaseModel):
+    """A captured failure of an external task after its retries are exhausted.
+
+    Surfaced in the monitoring view and resolvable by an admin/operator; never
+    blocks the pure engine, which keeps the step activated until resolved.
+    """
+
+    id: str
+    external_task_id: str
+    instance_id: str
+    node_id: str
+    message: str
+    created_at: float
+    resolved: bool = False
+
+
+class WebhookSubscription(BaseModel):
+    """A server-side subscription delivering domain events to a tool (E13).
+
+    ``secret_ref`` references the HMAC signing secret in the server-side secret
+    store; the secret itself never lives in the model (rule I4).
+    """
+
+    id: str
+    url: str
+    events: list[str] = Field(default_factory=list)
+    secret_ref: str
+    active: bool = True
+
+
+class OutboxState(StrEnum):
+    """Delivery lifecycle of a queued outbound webhook event (E13)."""
+
+    PENDING = "PENDING"      # awaiting (first or retried) delivery
+    DELIVERED = "DELIVERED"  # accepted by the receiver (2xx)
+    FAILED = "FAILED"        # transient failure, will be retried after back-off
+    DEAD = "DEAD"            # retries exhausted -> dead-letter
+
+
+class OutboxEntry(BaseModel):
+    """One queued webhook delivery (transactional outbox row, E13).
+
+    Persisted in the same step as the triggering domain event, so an event is
+    never lost on a crash. A dispatcher later delivers it with a back-off retry,
+    an HMAC signature and a per-target circuit breaker. ``delivery_id`` is unique
+    per attempt-set so the receiver can de-duplicate (idempotent delivery).
+    """
+
+    id: str
+    subscription_id: str
+    event_type: str
+    delivery_id: str
+    url: str
+    payload: dict[str, object] = Field(default_factory=dict)
+    state: OutboxState = OutboxState.PENDING
+    attempts: int = 0
+    max_attempts: int = 5
+    next_attempt_at: float = 0.0
+    created_at: float = 0.0
+    last_status: int | None = None
+    last_error: str | None = None
+    #: Secret reference for HMAC signing of a subscription-less push delivery
+    #: (``HTTP_PUSH`` activity push). Subscription deliveries resolve the secret
+    #: from the subscription instead; empty means "do not sign". Never the
+    #: secret itself (rule I4).
+    secret_ref: str = ""
+
+
+class WebhookDelivery(BaseModel):
+    """A single delivery attempt of an outbox entry (delivery log, E13)."""
+
+    id: str
+    outbox_id: str
+    subscription_id: str
+    event_type: str
+    attempt: int
+    at: float
+    ok: bool
+    status_code: int | None = None
+    error: str | None = None
+

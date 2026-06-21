@@ -79,13 +79,15 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   CORS-Middleware erlaubt dem Browser-Client den Zugriff (im lokalen Betrieb
   unbedenklich, da der Client keine Korrektheitslogik trägt).
 - **Web-Client** (`../web/`): ein schlanker **No-Build**-Web-Client (reines
-  HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Sechs
+  HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Sieben
   Sichten — Modellieren (geführte +-Operationen, live validiert; Knoten
   umbenennen/entfernen, Auswahl wird zentriert),
   Datensicht, Ressourcensicht (Organisation als Baumstruktur mit Abteilungen,
   Vorgesetzten und Umhängen-Dialog; Agenten samt Vertreter in eigener Tabelle),
   Ausführung (Worklist + Live-Prozesslandkarte), Meine Aufgaben
-  (Bearbeiter-Aufgabenliste) und Monitoring. Jede Änderung läuft über den
+  (Bearbeiter-Aufgabenliste), Monitoring und Integration (Connector-Registry,
+  Datenanbindungs-Assistent, Automatik-Binding, Webhook-Panel, Inzident-Liste).
+  Jede Änderung läuft über den
   Validate-before-Commit-Pfad des Kerns; die GUI trifft **keine**
   Korrektheitsentscheidung (Abschnitt 5.4/8.3).
 - **Persistenz** (`db.py`, `store.py`): austauschbarer Store für Schemata,
@@ -122,6 +124,42 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   übergeben (kein String-Concat ? kein Injection-Risiko), Zugangsdaten liegen
   nur serverseitig im Connector, nie im Schema. `InMemoryConnector` ist die
   Referenz-Implementierung für Tests/Demos.
+
+- **Offene Integrationsschicht** (`/v1`-Router in `api.py`, `integration_runtime.py`,
+  `outbox.py`, `connections.py`): eine versionierte, maschinen-authentifizierte
+  API zur Anbindung fremder Tools. Eine **Maschinen-Rolle `integration` mit
+  Scopes** (`instances:start`, `tasks:fetch`, `tasks:complete`, `data:read`,
+  `data:write`, `events:subscribe`, Wildcard `*`) sichert jeden `/v1`-Endpunkt
+  zusätzlich zu den Personen-Rollen; mutierende Aufrufe akzeptieren einen
+  `Idempotency-Key`-Header (Erfolg wird gecacht). Vier Bausteine:
+  - **Inbound**: `POST /v1/schemas/{id}/instances` (nur freigegeben),
+    `…/nodes/{nodeId}/complete` und `…/decide`, `GET`/`PUT /v1/instances/{id}/data`
+    (typgeprüft), `GET /v1/instances/{id}` / `…/tasks`.
+  - **External-Task-Pull** (`integration_runtime.py`): aktivierte automatische
+    `EXTERNAL_TASK`-Aktivitäten werden zu Aufgaben; ein Worker holt sie per
+    `POST /v1/external-tasks/fetch-and-lock` ab und meldet über
+    `…/{id}/complete|failure|bpmn-error|extend-lock|unlock` zurück
+    (Lock/Backoff/Inzident, Exactly-once). `GET /v1/incidents` +
+    `POST /v1/incidents/{id}/resolve`.
+  - **HTTP-Push** (`HTTP_PUSH`): bei Aktivierung pusht der Outbox-Dispatcher das
+    Eingabe-Datenpaket an ein serverseitig konfiguriertes Tool-Endpoint
+    (`PROCWORKS_PUSH_ENDPOINTS` = Dateipfad oder Inline-JSON
+    `{ref: {url, secret_ref?}}`). Der Push trägt ein **Callback-Token**; das Tool
+    meldet das Ergebnis über den regulären `…/complete`-Endpunkt zurück.
+    `GET /v1/push-endpoints` listet die Referenzen (ohne URL/Secret),
+    `POST /v1/external-tasks/drive-push` stößt einen Drive manuell an. Push-Fehler
+    blockieren oder beschädigen den Prozess nie.
+  - **Webhooks** (`outbox.py`): `GET`/`POST /v1/webhooks`, `DELETE …/{id}`,
+    `POST …/{id}/test`, `GET …/{id}/deliveries`. Signierte (HMAC) Zustellung
+    über eine transaktionale Outbox mit Backoff-Retry, Circuit-Breaker und
+    SSRF-Allowlist (`PROCWORKS_WEBHOOK_ALLOWLIST`).
+
+  Connectoren werden über `PROCWORKS_CONNECTIONS` (Dateipfad oder
+  Inline-JSON-Array) konfiguriert; `GET /v1/connectors`,
+  `POST /v1/connectors/{id}/test` und `…/sample-read` decken Metadaten,
+  Verbindungstest und Beispiellese ab. Secrets stehen überall nur als
+  `${ENV}`/`secret_ref` serverseitig, nie im Schema. Vollständige Rezepte und
+  Endpunkt-Referenz: [../docs/Integrations-Leitfaden.md](../docs/Integrations-Leitfaden.md).
 
 - **BPMN-Import/Export** (`bpmn.py`): exportiert ein Schema als semantisches
   **BPMN 2.0**-Dokument (Start/Ende ? Events, Aktivität ? `task`,

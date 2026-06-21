@@ -1006,6 +1006,20 @@ flowchart TB
 
 > **Bezug zu ADEPT:** Externe Zugriffe werden als **Aktivitätenvorlagen** im Activity Repository gekapselt (z. B. „SAP-Auftrag lesen", „Dynamics-Kontakt anlegen") und homogenisieren den Dienst nach oben (I/O-Parameter), während der Connector die technischen Details nach unten liefert (vgl. Ausführungsumgebungen wie JDBC/Web Service).
 
+### 9.3 Maximal offene Integrationsschicht (Steuerung von/zu Fremd-Tools)
+
+Über den reinen Datenzugriff hinaus beschreibt das eigenständige
+[Integrations-Konzept – Maximal offene API-Anbindung](Integrations-Konzept-Externe-Anbindung.md)
+eine vollständige, **bidirektionale** Tool-Anbindung: (1) **Inbound** – fremde Tools
+starten Instanzen und schließen Aufgaben inkl. Datenübergabe (Service-Token/Scopes,
+Idempotenz); (2) **Outbound** – automatische Aktivitäten beauftragen Fremd-Tools per
+**External-Task-Pull** (Worker holt/sperrt/meldet zurück) oder **HTTP-Push/Webhook**
+(transaktionale Outbox, HMAC-signiert); (3) **Datenelemente** bidirektional über Tools
+oder per **Direktzugriff** auf SQL-Server/OData/SAP. Eine **GUI-Integrationssicht**
+modelliert die Datenanbindung geführt und robust. Die Schicht ist eine **Boundary-
+Fähigkeit** (kein Bypass der CbC-Invariante, Kern bleibt rein); zugehörige Roadmap-Punkte:
+E10–E13 (§13.1).
+
 ---
 
 ## 10. Open-Source-Bereitstellung & GitHub-Projekt
@@ -1224,6 +1238,10 @@ Die folgenden Punkte ergeben sich unmittelbar aus den oben ergänzten Konzeptabs
 | E7 | **Modellmetriken & 7PMG-Hinweise** (Größe, Verschachtelungstiefe, Gateway-Heterogenität) als nicht-blockierende Editor-Hinweise | §2.4.1 | `metrics.py` (`model_metrics`/`model_hints`, reine Kennzahlen, keine Stufe-A/B-Erzwingung), API `GET /schemas/{id}/metrics` | **umgesetzt** – nur Hinweise, keine Erzwingung |
 | E8 | **Arbeitslisten-Priorität** (`Priorität = Auswirkung + Dringlichkeit`) mit Sortierung je Eintrag | §3.8, §6.2.1 | `model.py` (`WorkItemPriority`, `ImpactUrgency`, `PriorityLevel`), `assignment.py` (Worklist-Sortierung, `OpenTask.priority`), `operations.set_node_priority`, API `POST /schemas/{id}/priority` | **umgesetzt** – additive Felder + Sortierung |
 | E9 | **Mehrstufige Eskalation** (funktional/horizontal vs. hierarchisch/vertikal, zeitgesteuert bei Fristüberschreitung) | §3.8 (T3), §6.2.1 | `execution.py` (Timer/Eskalationsauslösung), `assignment.py` (Ziel-Bearbeitermenge), `audit.py` (Protokollierung) | **offen** – an E5-Laufzeitteil (Timer) gekoppelt; eigenes Inkrement |
+| E10 | **Offene Inbound-API** (fremde Tools starten Instanzen & schließen Aufgaben inkl. Datenübergabe) + Service-Token/Scopes + Idempotenz | §9, [Integrations-Konzept](Integrations-Konzept-Externe-Anbindung.md) §5 | `auth.py`/`auth_token.py` (Rolle `integration`, Scopes), `api.py` (`/v1`-Router, Idempotenz), `GET/PUT /v1/instances/{id}/data` | **umgesetzt** (P1) – additiv, Boundary-only |
+| E11 | **External-Task-Runtime (Outbound-Pull)**: automatische Aktivität → externe Aufgabe; Worker holt/sperrt/meldet zurück (Lock/Retry/Inzident) | §6, §9, [Integrations-Konzept](Integrations-Konzept-Externe-Anbindung.md) §6 | `integration_runtime.py` (neu), `model.py` (`AutomationKind`, `ExternalTask`, `Incident`), `store.py`/`db.py`, `api.py`, Migration `0006` | **umgesetzt** (P2) – Kern bleibt rein (Treiber an der Grenze) |
+| E12 | **Reale Daten-Connectoren** (MS SQL/MySQL/PostgreSQL/OData/SAP) + bidirektionaler Pre-Fetch/Post-Flush, Connection-Registry/Secret-Store | §9, [Integrations-Konzept](Integrations-Konzept-Externe-Anbindung.md) §7 | `dal.py` (`SqlAlchemyConnector`), `connections.py` (neu), `integration_runtime.py`, `api.py` (`/connectors/{id}/test`+`/sample-read`) | **umgesetzt** (P3) – SQL via SQLAlchemy; OData/SAP offen (SPI unverändert) |
+| E13 | **Webhooks/Outbox & GUI-Integrationssicht**: signierte Ereigniszustellung (transaktionale Outbox), Datenanbindungs-Assistent | §8, §9, [Integrations-Konzept](Integrations-Konzept-Externe-Anbindung.md) §6.3/§11 | `outbox.py` (neu), `model.py`, `store.py`/`db.py`, `integration_runtime.py`, `api.py` (`/v1/webhooks`), Migration `0007`, `web/app.js`/`index.html`/`styles.css` | **umgesetzt** (P4) – Outbox/HMAC/Retry/Circuit-Breaker/SSRF-Allowlist (I6); GUI-Integrationssicht offen (P5) |
 
 > **Leitplanke:** Alle Punkte sind **additiv** und ändern die bestehende Correctness-by-Construction-Invariante nicht. Die umgesetzten Punkte (E3, E5-statisch, E7, E8 sowie der Zeit-/Flexibilitätsteil von E4) sind mit eigenen Tests hinterlegt und lockern kein bestehendes Kriterium (K/D/Z/B/R/M, H/F); die statische Zeitprüfung erweitert die Invariante sogar um eine eigene, ausschließlich bei vorhandenen Zeitangaben greifende Regelgruppe (T1/T2). Die offenen, laufzeit-invasiven Punkte (E1/E2/E6/E9 sowie Kosten/Qualität in E4 und der Timer-Teil von E5) erhalten je ein eigenes Inkrement und werden hier **bewusst nicht** als erledigt ausgewiesen.
 
