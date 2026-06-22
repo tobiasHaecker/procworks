@@ -79,14 +79,18 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   CORS-Middleware erlaubt dem Browser-Client den Zugriff (im lokalen Betrieb
   unbedenklich, da der Client keine Korrektheitslogik trägt).
 - **Web-Client** (`../web/`): ein schlanker **No-Build**-Web-Client (reines
-  HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Sieben
+  HTML/CSS/JavaScript, kein npm/Bundler) als dünne GUI über der API. Acht
   Sichten — Modellieren (geführte +-Operationen, live validiert; Knoten
   umbenennen/entfernen, Auswahl wird zentriert),
   Datensicht, Ressourcensicht (Organisation als Baumstruktur mit Abteilungen,
-  Vorgesetzten und Umhängen-Dialog; Agenten samt Vertreter in eigener Tabelle),
+  Vorgesetzten und Umhängen-Dialog; Agenten samt Vertreter in eigener Tabelle;
+  zusätzlich ein Organigramm der Abteilungs-Hierarchie, dessen Klick die
+  gewählte Abteilung samt zugehöriger Agenten inkl. Vorgesetztem hervorhebt),
   Ausführung (Worklist + Live-Prozesslandkarte), Meine Aufgaben
-  (Bearbeiter-Aufgabenliste), Monitoring und Integration (Connector-Registry,
-  Datenanbindungs-Assistent, Automatik-Binding, Webhook-Panel, Inzident-Liste).
+  (Bearbeiter-Aufgabenliste), Monitoring, Integration (Connector-Registry,
+  Datenanbindungs-Assistent, Automatik-Binding, Webhook-Panel, Inzident-Liste)
+  und Hilfe (Kurzübersicht aller Sichten, Schnellstart je Rolle, Glossar der
+  Regel-Codes).
   Jede Änderung läuft über den
   Validate-before-Commit-Pfad des Kerns; die GUI trifft **keine**
   Korrektheitsentscheidung (Abschnitt 5.4/8.3).

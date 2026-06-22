@@ -54,6 +54,17 @@ const state = {
   instance: null,
   worklist: null,
   selectedNode: null,
+  // When a data/worker badge on a control-flow node is clicked, the target view
+  // (data / resource) highlights and scrolls to that node's bindings. Mutually
+  // exclusive; cleared on a manual nav click. Not persisted.
+  dataFocusNode: null,
+  staffFocusNode: null,
+  // Resource view: clicking an org unit (in the org chart or the Abteilungen
+  // tree) highlights that unit plus the agents that belong to it -- including
+  // the unit's supervisor -- in the Agenten table. orgFocusUnit is the selected
+  // unit id; orgFocusAgents lists the agent ids to emphasise. Not persisted.
+  orgFocusUnit: null,
+  orgFocusAgents: [],
   // Last seen runtime-event revision (GET /monitoring/revision). Drives the
   // live auto-refresh of the task/monitoring/run views; not persisted.
   revision: 0,
@@ -335,12 +346,124 @@ function renderGraph(schema, opts) {
     g.appendChild(svg("text", { class: "gstate", x: p.x + p.w / 2, y: p.y + p.h / 2 + 14, "text-anchor": "middle" },
       document.createTextNode(sub)));
     root.appendChild(g);
+    renderNodeBadges(root, schema, node, p, opts);
   });
 
   const wrap = el("div", { class: "canvas-wrap" }, root,
     el("div", { class: "canvas-hint" }, "Mausrad: Zoom \u00B7 Ziehen: Verschieben"));
   attachPanZoom(wrap, root);
   return wrap;
+}
+
+// Draw small "chips" straddling the bottom edge of an activity node that show
+// whether it has data bindings and/or a worker (BZR) assignment. In the
+// modelling control-flow view the chips are clickable and jump to the data /
+// resource view with that node's bindings highlighted (opts.onOpenData /
+// opts.onOpenStaff); elsewhere (e.g. the live process map) they are static
+// indicators. Purely visual -- never touches the model or backend.
+function renderNodeBadges(root, schema, node, p, opts) {
+  if (node.type !== NODE_TYPE.ACTIVITY && node.type !== NODE_TYPE.SUBPROCESS) return;
+  const accesses = (schema.data_accesses || []).filter((a) => a.node_id === node.id);
+  const rule = (schema.staff_rules || {})[node.id];
+  const chips = [];
+  if (accesses.length) {
+    const detail = accesses.map((a) => {
+      const e = schema.data_elements[a.element_id];
+      return (e ? e.name : a.element_id) + " (" + a.mode + ")";
+    }).join(", ");
+    chips.push({
+      kind: "data",
+      label: "Daten " + accesses.length,
+      title: "Datenbindungen: " + detail + (opts.onOpenData ? "\u2002\u2013 klicken \u00F6ffnet die Datensicht" : ""),
+      onClick: opts.onOpenData ? () => opts.onOpenData(node.id) : null,
+    });
+  }
+  if (rule) {
+    chips.push({
+      kind: "staff",
+      label: "Bearbeiter",
+      title: describeRule(rule) + (opts.onOpenStaff ? "\u2002\u2013 klicken \u00F6ffnet die Bearbeiterzuordnung" : ""),
+      onClick: opts.onOpenStaff ? () => opts.onOpenStaff(node.id) : null,
+    });
+  }
+  if (!chips.length) return;
+  const PADX = 7, GAP = 6, CH = 6;
+  const widths = chips.map((c) => Math.round(c.label.length * CH) + PADX * 2);
+  const total = widths.reduce((s, w) => s + w, 0) + GAP * (chips.length - 1);
+  let cx = p.x + (p.w - total) / 2;
+  const y = p.y + p.h - 8;
+  chips.forEach((chip, i) => {
+    const w = widths[i];
+    const g = svg("g", {
+      class: "gchip gchip-" + chip.kind + (chip.onClick ? " gchip-link" : ""),
+      onClick: chip.onClick ? (e) => { e.stopPropagation(); chip.onClick(); } : null,
+    });
+    g.appendChild(svg("title", null, document.createTextNode(chip.title)));
+    g.appendChild(svg("rect", { class: "gchip-bg", x: cx, y, width: w, height: 16, rx: 8 }));
+    g.appendChild(svg("text", { class: "gchip-txt", x: cx + w / 2, y: y + 11, "text-anchor": "middle" },
+      document.createTextNode(chip.label)));
+    root.appendChild(g);
+    cx += w + GAP;
+  });
+}
+
+// Jump from a control-flow badge into the data / resource view with that node's
+// bindings highlighted (and scrolled into view). The focus is mutually
+// exclusive between the two views.
+function focusBindingView(view, nodeId) {
+  state.dataFocusNode = view === "data" ? nodeId : null;
+  state.staffFocusNode = view === "org" ? nodeId : null;
+  state.view = view;
+  setActiveNav();
+  render();
+}
+
+// Smoothly bring the first highlighted (.hl-row) table row of the current view
+// into the centre of the viewport after a render.
+function scrollHighlightIntoView() {
+  requestAnimationFrame(() => {
+    const row = byId("content").querySelector(".hl-row");
+    if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+}
+
+// Dismissible banner shown above a highlighted binding table to explain why a
+// row is emphasised and let the user clear the emphasis.
+function focusBanner(text, onClear) {
+  return el("div", { class: "focus-banner" },
+    el("span", null, text),
+    el("button", { class: "btn small ghost", onClick: onClear }, "Hervorhebung l\u00F6schen"));
+}
+
+// Highlight an organisational unit (in the Abteilungen tree and the org chart)
+// together with every agent that belongs to it -- including the unit's
+// supervisor (manager) -- in the Agenten table. Selecting a unit is a fresh
+// resource-focus intent, so it clears any staff-rule highlight. Not persisted.
+function focusOrgUnit(unitId) {
+  const org = (state.schema && state.schema.org_model) || { agents: {}, org_units: {} };
+  const unit = (org.org_units || {})[unitId];
+  if (!unit) return;
+  const ids = Object.values(org.agents || {})
+    .filter((a) => a.org_unit_id === unitId)
+    .map((a) => a.id);
+  if (unit.manager_id && (org.agents || {})[unit.manager_id] && !ids.includes(unit.manager_id)) {
+    ids.push(unit.manager_id);
+  }
+  state.orgFocusUnit = unitId;
+  state.orgFocusAgents = ids;
+  state.staffFocusNode = null;
+  render();
+}
+
+// Highlight a single agent (a unit's supervisor) in the Agenten table -- used
+// when the supervisor badge in the Abteilungen tree is clicked.
+function focusOrgAgent(agentId, unitId) {
+  const org = (state.schema && state.schema.org_model) || { agents: {} };
+  if (!agentId || !(org.agents || {})[agentId]) return;
+  state.orgFocusUnit = unitId || null;
+  state.orgFocusAgents = [agentId];
+  state.staffFocusNode = null;
+  render();
 }
 
 // Make a rendered graph canvas pannable (drag in any direction) and zoomable
@@ -569,6 +692,8 @@ function viewModel() {
     onPlus: draft ? openInsertModal : null,
     selectedId: state.selectedNode,
     onSelectNode: (id) => { state.selectedNode = id; render(); },
+    onOpenData: (id) => focusBindingView("data", id),
+    onOpenStaff: (id) => focusBindingView("org", id),
   });
 
   const hint = el("div", { class: "panel-b muted", style: "font-size:12px" },
@@ -817,18 +942,31 @@ function viewData() {
     el("div", { class: "panel-b" }, elemTable));
 
   // Datenzugriffe
-  const accRows = (schema.data_accesses || []).map((a) => {
+  const accList = schema.data_accesses || [];
+  const accRows = accList.map((a) => {
     const node = schema.nodes[a.node_id];
     const elem = schema.data_elements[a.element_id];
     return [node ? nodeCaption(node) : a.node_id, elem ? elem.name : a.element_id, a.mode, a.mandatory ? "Pflicht" : "optional"];
   });
-  const accTable = accRows.length ? table(["Schritt", "Element", "Modus", "Bindung"], accRows) : emptyState("Noch keine Datenbindungen.");
+  const accTable = accRows.length
+    ? table(["Schritt", "Element", "Modus", "Bindung"], accRows,
+        (i) => accList[i].node_id === state.dataFocusNode ? "hl-row" : "")
+    : emptyState("Noch keine Datenbindungen.");
   const addAccBtn = el("button", { class: "btn small", onClick: addDataAccess, disabled: !draft || activitiesOf(schema).length === 0 || elemRows.length === 0 }, "+ Datenbindung");
   const accPanel = el("div", { class: "panel" },
     el("div", { class: "panel-h" }, el("h2", null, "Lese-/Schreibbindungen"), el("span", { class: "sub" }, "D1-D4 live gepr\u00FCft"), el("span", { class: "spacer", style: "flex:1" }), addAccBtn),
     el("div", { class: "panel-b" }, accTable));
 
-  content.appendChild(el("div", { class: "grid-2" }, elemPanel, el("div", null, accPanel, dFindingsPanel())));
+  const dataFocus = state.dataFocusNode && schema.nodes[state.dataFocusNode];
+  const rightCol = el("div", null,
+    dataFocus
+      ? focusBanner("Hervorgehoben: Bindungen von \u201E" + nodeCaption(dataFocus) + "\u201C",
+          () => { state.dataFocusNode = null; render(); })
+      : null,
+    accPanel, dFindingsPanel());
+
+  content.appendChild(el("div", { class: "grid-2" }, elemPanel, rightCol));
+  scrollHighlightIntoView();
 }
 
 function dFindingsPanel() {
@@ -895,20 +1033,37 @@ function viewOrg() {
   const agentPanel = agentListPanel(org, orgEditable);
 
   // BZR-Zuordnung
-  const ruleRows = Object.entries(schema.staff_rules || {}).map(([nid, rule]) => {
+  const ruleEntries = Object.entries(schema.staff_rules || {});
+  const ruleRows = ruleEntries.map(([nid, rule]) => {
     const node = schema.nodes[nid];
     return [node ? nodeCaption(node) : nid, describeRule(rule)];
   });
-  const ruleTable = ruleRows.length ? table(["Schritt", "Bearbeiterregel"], ruleRows) : emptyState("Noch keine Bearbeiterzuordnung.");
+  const ruleTable = ruleRows.length
+    ? table(["Schritt", "Bearbeiterregel"], ruleRows,
+        (i) => ruleEntries[i][0] === state.staffFocusNode ? "hl-row" : "")
+    : emptyState("Noch keine Bearbeiterzuordnung.");
   const addRuleBtn = el("button", { class: "btn small", onClick: addStaffRule,
     disabled: !draft || activitiesOf(schema).length === 0 || (Object.keys(org.roles || {}).length + Object.keys(org.org_units || {}).length) === 0 }, "+ Zuordnung");
   const rulePanel = el("div", { class: "panel" },
     el("div", { class: "panel-h" }, el("h2", null, "Bearbeiterzuordnung (BZR)"), el("span", { class: "sub" }, "Z1-Z4 live"), el("span", { class: "spacer", style: "flex:1" }), addRuleBtn),
     el("div", { class: "panel-b" }, ruleTable));
 
+  const staffFocus = state.staffFocusNode && schema.nodes[state.staffFocusNode];
+  const orgFocusUnit = state.orgFocusUnit && (org.org_units || {})[state.orgFocusUnit];
   content.appendChild(el("div", { class: "grid-2" },
     el("div", null, orgPanel, rolePanel, unitPanel, agentPanel),
-    el("div", null, rulePanel, zFindingsPanel())));
+    el("div", null,
+      staffFocus
+        ? focusBanner("Hervorgehoben: Zuordnung von \u201E" + nodeCaption(staffFocus) + "\u201C",
+            () => { state.staffFocusNode = null; render(); })
+        : null,
+      rulePanel, zFindingsPanel(),
+      orgFocusUnit
+        ? focusBanner("Hervorgehoben: Abteilung \u201E" + orgFocusUnit.name + "\u201C inkl. zugeh\u00F6riger Agenten",
+            () => { state.orgFocusUnit = null; state.orgFocusAgents = []; render(); })
+        : null,
+      orgChartPanel(org))));
+  scrollHighlightIntoView();
 }
 
 // Endpoint base for org-entity edits: the shared org registry when the schema
@@ -1001,10 +1156,12 @@ function orgUnitPanel(org, draft) {
 
 function renderUnitNode(unit, org, draft, childrenOf) {
   const mgr = unit.manager_id && org.agents[unit.manager_id] ? org.agents[unit.manager_id].name : null;
-  const row = el("div", { class: "tree-row" },
+  const rowCls = "tree-row" + (unit.id === state.orgFocusUnit ? " tree-row-hl" : "");
+  const row = el("div", { class: rowCls },
     el("span", { class: "tree-name" }, unit.name),
     mgr
-      ? el("span", { class: "tree-badge" }, "\u2605 " + mgr)
+      ? el("span", { class: "tree-badge tree-badge-link", title: "Vorgesetzten in der Agentenliste hervorheben",
+          onClick: () => focusOrgAgent(unit.manager_id, unit.id) }, "\u2605 " + mgr)
       : el("span", { class: "tree-badge muted-badge" }, "kein Vorgesetzter"),
     el("span", { class: "spacer", style: "flex:1" }),
     el("button", { class: "btn small", onClick: () => editManager(unit) }, "Vorgesetzter"),
@@ -1043,9 +1200,52 @@ function agentListPanel(org, draft) {
       }
       return [a.name, roles, unit, dep, actions];
     });
-    body.appendChild(table(["Agent", "Rollen", "Abteilung", "Vertreter", ""], rows));
+    body.appendChild(table(["Agent", "Rollen", "Abteilung", "Vertreter", ""], rows,
+      (i) => (state.orgFocusAgents || []).includes(agents[i].id) ? "hl-row" : ""));
   }
   return el("div", { class: "panel" }, head, body);
+}
+
+// Organigramm: the org-unit hierarchy rendered as a classic top-down org chart
+// (HTML/CSS, no SVG). Clicking a box highlights that unit (in the chart and the
+// Abteilungen tree) and every agent that belongs to it -- including the unit's
+// supervisor -- in the Agenten table.
+function orgChartPanel(org) {
+  const units = Object.values(org.org_units || {});
+  const head = el("div", { class: "panel-h" }, el("h2", null, "Organigramm"),
+    el("span", { class: "sub" }, "Klick hebt Abteilung + Agenten hervor"));
+  const body = el("div", { class: "panel-b" });
+  if (!units.length) {
+    body.appendChild(emptyState("Noch keine Abteilung modelliert."));
+    return el("div", { class: "panel" }, head, body);
+  }
+  // Kinder je Elternknoten indexieren; verwaiste (unbekannter Parent) als Wurzel.
+  const known = org.org_units || {};
+  const childrenOf = {};
+  units.forEach((u) => {
+    const p = u.parent_id && known[u.parent_id] ? u.parent_id : "__root__";
+    (childrenOf[p] = childrenOf[p] || []).push(u);
+  });
+  Object.values(childrenOf).forEach((list) => list.sort((a, b) => a.name.localeCompare(b.name)));
+  const roots = childrenOf["__root__"] || [];
+  body.appendChild(el("div", { class: "orgchart" },
+    el("ul", null, ...roots.map((u) => orgChartNode(u, org, childrenOf)))));
+  return el("div", { class: "panel" }, head, body);
+}
+
+function orgChartNode(unit, org, childrenOf) {
+  const mgr = unit.manager_id && (org.agents || {})[unit.manager_id] ? org.agents[unit.manager_id].name : null;
+  const memberCount = Object.values(org.agents || {}).filter((a) => a.org_unit_id === unit.id).length;
+  const cls = "oc-node" + (unit.id === state.orgFocusUnit ? " selected" : "");
+  const box = el("div", { class: cls, title: "Abteilung + zugeh\u00F6rige Agenten hervorheben",
+    onClick: () => focusOrgUnit(unit.id) },
+    el("div", { class: "oc-name" }, unit.name),
+    mgr ? el("div", { class: "oc-mgr" }, "\u2605 " + mgr) : el("div", { class: "oc-mgr oc-muted" }, "kein Vorgesetzter"),
+    el("div", { class: "oc-count" }, memberCount + (memberCount === 1 ? " Agent" : " Agenten")));
+  const li = el("li", null, box);
+  const kids = childrenOf[unit.id] || [];
+  if (kids.length) li.appendChild(el("ul", null, ...kids.map((c) => orgChartNode(c, org, childrenOf))));
+  return li;
 }
 
 function describeRule(rule) {
@@ -1364,14 +1564,18 @@ async function renderInstanceDetail(container, withActions) {
     tlBody.appendChild(emptyState("Noch keine Ereignisse aufgezeichnet."));
   } else {
     const tl = el("div", { class: "timeline" });
+    // Spaltenkopf: der Bearbeiter (Akteur) steht in einer eigenen Spalte.
+    tl.appendChild(el("div", { class: "tl-item tl-head" },
+      el("span", { class: "tl-time" }, "Zeit"),
+      el("span", { class: "tl-type" }, "Ereignis"),
+      el("span", { class: "tl-actor" }, "Bearbeiter"),
+      el("span", { class: "tl-meta" }, "Detail")));
     events.forEach((ev) => {
-      const meta = [];
-      if (ev.label || ev.node_id) meta.push(ev.label || ev.node_id);
-      if (ev.agent_id) meta.push("Bearbeiter: " + agentNameOf(ev.agent_id));
       tl.appendChild(el("div", { class: "tl-item" },
         el("span", { class: "tl-time" }, fmtTimestamp(ev.timestamp)),
         el("span", { class: "tl-type" }, eventLabel(ev.event_type)),
-        el("span", { class: "tl-meta" }, meta.join(" \u2013 "))));
+        el("span", { class: "tl-actor" }, ev.agent_id ? agentNameOf(ev.agent_id) : "System"),
+        el("span", { class: "tl-meta" }, ev.label || ev.node_id || "\u2013")));
     });
     tlBody.appendChild(tl);
   }
@@ -1481,6 +1685,18 @@ async function viewMonitor() {
     el("div", { class: "panel-h" }, el("h2", null, "Aktive Instanzen"), el("span", { class: "sub" }, "Klick \u00F6ffnet Detail")),
     el("div", { class: "panel-b" }, tbl)));
 
+  // Detail der ausgewaehlten Instanz inkl. Live-Prozesslandkarte -- direkt unter
+  // der Liste der aktiven Instanzen, damit der Bezug sofort sichtbar ist.
+  if (state.instance) {
+    const detail = el("div");
+    // Schema der Instanz laden, damit der Graph passt
+    if (state.instance.schema_id !== state.schemaId) {
+      try { state.schema = await api.get(`/schemas/${state.instance.schema_id}`); } catch (e) { /* ignore */ }
+    }
+    await renderInstanceDetail(detail, true);
+    content.appendChild(detail);
+  }
+
   // Engpass-Analyse (Aktivitaeten nach Haeufigkeit + Dauer)
   const stats = (report && report.activity_stats) || [];
   const statRows = stats.map((s) => [s.label || s.node_id, String(s.completed), fmtDuration(s.avg_duration_seconds)]);
@@ -1504,21 +1720,6 @@ async function viewMonitor() {
     el("div", { class: "panel-b" }, edgeRows.length
       ? table(["Von", "Nach", "H\u00E4ufigkeit"], edgeRows)
       : emptyState("Noch keine Abl\u00E4ufe entdeckt. Schlie\u00DFe Aktivit\u00E4ten ab."))));
-
-  // Wartung: nur Administratoren d\u00FCrfen die Daten zur\u00FCcksetzen oder die
-  // Beispieldaten laden. Beides l\u00E4uft \u00FCber POST /admin/reset.
-  if (hasRole("admin")) {
-    content.appendChild(el("div", { class: "panel" },
-      el("div", { class: "panel-h" },
-        el("h2", null, "Wartung (Administrator)"),
-        el("span", { class: "sub" }, "Daten zur\u00FCcksetzen \u00B7 Beispiel laden")),
-      el("div", { class: "panel-b" },
-        el("p", { class: "muted" },
-          "Setzt das gesamte System zur\u00FCck. Die Beispieldaten zeigen alle Funktionen anhand zweier Prozesse, einer Organisation und drei laufenden Instanzen. Dieser Vorgang l\u00F6scht alle vorhandenen Daten unwiderruflich."),
-        el("div", { style: "display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;" },
-          el("button", { class: "btn primary", onClick: () => confirmReset(true) }, "Beispieldaten laden"),
-          el("button", { class: "btn danger", onClick: () => confirmReset(false) }, "Auf Null zur\u00FCcksetzen")))));
-  }
 
   // Inzidente externer Aufgaben (Integrations-Konzept 11.5). Sichtbar fuer alle
   // Monitoring-Leser; "Erneut versuchen" (Aufloesen + Wiedereinreihen) ist nur
@@ -1544,14 +1745,20 @@ async function viewMonitor() {
       el("span", { class: "sub" }, "Topic-Fehler \u00B7 Aufl\u00F6sen reiht die Aufgabe erneut ein")),
     incBody));
 
-  if (state.instance) {
-    const detail = el("div");
-    // Schema der Instanz laden, damit der Graph passt
-    if (state.instance.schema_id !== state.schemaId) {
-      try { state.schema = await api.get(`/schemas/${state.instance.schema_id}`); } catch (e) { /* ignore */ }
-    }
-    await renderInstanceDetail(detail, true);
-    content.appendChild(detail);
+  // Wartung (Administrator): ganz unten, da selten benoetigt und destruktiv.
+  // Nur Administratoren duerfen zuruecksetzen oder Beispieldaten laden
+  // (POST /admin/reset).
+  if (hasRole("admin")) {
+    content.appendChild(el("div", { class: "panel" },
+      el("div", { class: "panel-h" },
+        el("h2", null, "Wartung (Administrator)"),
+        el("span", { class: "sub" }, "Daten zur\u00FCcksetzen \u00B7 Beispiel laden")),
+      el("div", { class: "panel-b" },
+        el("p", { class: "muted" },
+          "Setzt das gesamte System zur\u00FCck. Die Beispieldaten zeigen alle Funktionen anhand zweier Prozesse, einer Organisation und drei laufenden Instanzen. Dieser Vorgang l\u00F6scht alle vorhandenen Daten unwiderruflich."),
+        el("div", { style: "display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;" },
+          el("button", { class: "btn primary", onClick: () => confirmReset(true) }, "Beispieldaten laden"),
+          el("button", { class: "btn danger", onClick: () => confirmReset(false) }, "Auf Null zur\u00FCcksetzen")))));
   }
 }
 
@@ -2039,10 +2246,10 @@ function deleteWebhook(sub) {
 function emptyState(text) { return el("div", { class: "empty" }, text); }
 function kpi(label, value) { return el("div", { class: "kpi" }, el("div", { class: "label" }, label), el("div", { class: "value" }, String(value))); }
 
-function table(headers, rows) {
+function table(headers, rows, rowClassFn) {
   return el("table", null,
     el("thead", null, el("tr", null, ...headers.map((h) => el("th", null, h)))),
-    el("tbody", null, ...rows.map((r) => el("tr", null, ...r.map((c) =>
+    el("tbody", null, ...rows.map((r, i) => el("tr", rowClassFn ? { class: rowClassFn(i) || null } : null, ...r.map((c) =>
       el("td", null, c instanceof Node ? c : String(c)))))));
 }
 
@@ -2050,6 +2257,148 @@ function listPanel(title, headers, rows, onAdd, addLabel) {
   const head = el("div", { class: "panel-h" }, el("h2", null, title), el("span", { class: "spacer", style: "flex:1" }),
     onAdd ? el("button", { class: "btn small", onClick: onAdd }, addLabel) : null);
   return el("div", { class: "panel" }, head, el("div", { class: "panel-b" }, rows.length ? table(headers, rows) : emptyState("Noch nichts angelegt.")));
+}
+
+// --------------------------------------------------------------------------
+// View: Hilfe (kontextsensitive In-App-Hilfe + Glossar der Regel-Codes)
+// --------------------------------------------------------------------------
+
+// Documentation lives in the repository; link to the GitHub blobs so the help
+// works even when served as a static client without local file access.
+const DOCS_BASE = "https://github.com/tobiasHaecker/procworks/blob/main/docs/";
+
+// Short purpose of each navigation view (mirrors VIEW_META plus a one-liner of
+// what the user actually does there).
+const HELP_VIEWS = [
+  ["\u25A3 Modellieren", "Schritte \u00FCber \u201E+\u201C einf\u00FCgen (seriell / parallel / bedingt), umbenennen, entfernen, Befunde pr\u00FCfen, freigeben."],
+  ["\u2630 Datensicht", "Datenelemente anlegen und je Aktivit\u00E4t Lesen/Schreiben verbinden (Datenfluss D)."],
+  ["\u265F Ressourcensicht", "Organisation (Rollen, Einheiten, Agenten) und Bearbeiterregeln je Schritt (Z/A)."],
+  ["\u25B6 Ausf\u00FChrung", "Instanzen starten, Arbeitsliste abarbeiten, XOR-Zweige w\u00E4hlen. Modellierer starten Entw\u00FCrfe als Test-Instanz."],
+  ["\u2630 Meine Aufgaben", "Pers\u00F6nliche Arbeitsliste \u2013 Aufgaben mit \u201EErledigen\u201C abschlie\u00DFen."],
+  ["\u2609 Monitoring", "Live-Status aktiver Instanzen, Prozesslandkarte, Inzidente, Wartung (Administrator)."],
+  ["\u21C4 Integration", "Connectoren, externe Datenbindung, Automatik (External-Task / HTTP-Push), Webhooks."],
+];
+
+// Role-oriented quick starts: each entry points at the matching how-to doc.
+const HELP_QUICKSTART = [
+  ["Modellierer", "Prozess erstellen, Daten/Bearbeiter verdrahten, testen, freigeben.", "Modellierer-Anleitung.md"],
+  ["Sachbearbeiter", "Anmelden, eigene Aufgaben sehen und erledigen.", "Mitarbeiter-Anleitung.md"],
+  ["Administrator", "Installation, Logins, Betrieb (Update/Backup), Beispieldaten.", "Windows-Server-Setup.md"],
+  ["Integrator", "Fremdsysteme \u00FCber die offene /v1-Schnittstelle anbinden.", "Integrations-Leitfaden.md"],
+];
+
+// Glossary of the correctness rule codes that surface in the findings list and
+// error toasts. Grouped by family so a user can look up exactly what e.g. "D1"
+// or "B2" means. Kept in sync with validator.py and Architektur-Konzept §3.
+const HELP_RULES = [
+  ["Struktur & Kontrollfluss (K)", [
+    ["K1", "Blockstruktur: jeder Split hat genau einen passenden Join desselben Typs."],
+    ["K2", "Genau ein START und ein END; jede Aktivit\u00E4t hat genau eine Ein- und Ausgangskante."],
+    ["K3", "Erreichbarkeit: kein isolierter Knoten, keine Sackgasse \u2013 alles liegt auf START\u2192END."],
+    ["K4", "Sync-Kanten nur zwischen Aktivit\u00E4ten verschiedener UND-Zweige."],
+    ["K5", "Soundness: jeder Zustand kann ordentlich zum Ende gelangen."],
+    ["K6", "Strukturierte Schleifen (REPEAT-UNTIL mit definierter Abbruchbedingung)."],
+    ["K7", "XOR-Pr\u00E4dikate decken den Wertebereich vollst\u00E4ndig und \u00FCberlappungsfrei ab."],
+  ]],
+  ["Datenfluss (D)", [
+    ["D1", "Pflicht-Eingaben sind auf ALLEN Pfaden vor dem Lesen geschrieben."],
+    ["D2", "Keine konkurrierenden Schreibzugriffe paralleler Zweige auf dasselbe Element."],
+    ["D3", "Typkonformit\u00E4t von Quelle und Senke."],
+    ["D4", "Optionale Eingaben d\u00FCrfen unversorgt bleiben; Join-Knoten tragen keine Daten."],
+    ["D5", "Datenfluss wird live gepr\u00FCft und muss vor Freigabe sauber sein."],
+  ]],
+  ["Externe Datenbindung (C)", [
+    ["C1", "EXTERNE Elemente brauchen eine g\u00FCltige Connector-Bindung; INSTANCE-Elemente keine."],
+    ["C2", "Das Schl\u00FCsselelement der Bindung ist ein existierendes INSTANCE-Element (nicht es selbst)."],
+    ["C3", "Der gebundene Entit\u00E4tsname ist nicht leer."],
+  ]],
+  ["Bearbeiter / Ressourcen (Z, A)", [
+    ["Z1", "Bearbeiterregel ist syntaktisch g\u00FCltig und referenziert existierende Rollen/Einheiten."],
+    ["Z2", "Die Regel ist erf\u00FCllbar \u2013 sie liefert mindestens einen Agenten."],
+    ["Z3", "NodePerformingAgent(\u2026) verweist nur auf garantiert vorher laufende Schritte."],
+    ["Z4", "Interaktive Schritte brauchen eine Bearbeiterregel; automatische nicht."],
+    ["A1\u2013A3", "Zugeordneter Dienst (Template) ist vorhanden und typkonform an die Daten gebunden."],
+  ]],
+  ["Integration / Automatik (I)", [
+    ["I1", "Automatik wohlgeformt: External-Task braucht Topic, HTTP-Push eine Endpunkt-Referenz."],
+    ["I2", "Genau ein Automatik-Muster; automatisierte Bindung ist als automatisch markiert."],
+    ["I3", "Parameter-Mapping zeigt auf existierende Datenelemente."],
+    ["I4", "Topic/Endpunkt enthalten keine Inline-URL oder Zugangsdaten."],
+  ]],
+  ["Komposition (H, F)", [
+    ["H1\u2013H4", "Sub-Prozesse: nur freigegebene, gepinnte Version; typkonforme Schnittstelle; zyklenfrei."],
+    ["F1\u2013F3", "Folgeprozesse: Ziel existiert freigegeben; typkonformes Handover; lose Kopplung bei ASYNC."],
+  ]],
+  ["Zeit & Release (T, B)", [
+    ["T1\u2013T2", "Fristen/Dauern wohldefiniert und entlang der Blockstruktur widerspruchsfrei."],
+    ["B1", "Release-Reife: jeder Schritt hat einen ausf\u00FChrbaren Dienst."],
+    ["B2", "Release-Reife: jeder interaktive Schritt hat eine Bearbeiterzuordnung."],
+    ["B3", "Release-Reife: alle Pflichtdaten sind gebunden, alle Pr\u00E4dikate spezifiziert."],
+  ]],
+  ["Laufzeit & Migration (R, M)", [
+    ["R0", "Nur Entw\u00FCrfe sind editierbar; freigegebene Schemata sind unver\u00E4nderlich."],
+    ["R1\u2013R2", "Ad-hoc-\u00C4nderungen nur zustandsvertr\u00E4glich und unter Erhalt aller K/D-Regeln."],
+    ["M1\u2013M5", "Migration nur, wenn Ziel korrekt ist und der bisherige Verlauf vertr\u00E4glich bleibt."],
+  ]],
+  ["Modellhinweise (G, 7PMG)", [
+    ["G1", "Hinweis: sehr gro\u00DFes Modell (>50 Knoten) \u2013 ggf. in Sub-Prozesse zerlegen."],
+    ["G2", "Hinweis: hoher Gateway-Grad \u2013 Verzweigung vereinfachen."],
+    ["G6", "Hinweis: hohe Verschachtelungstiefe (>5)."],
+    ["G7", "Hinweis: Aktivit\u00E4t ohne sprechenden Namen."],
+  ]],
+];
+
+function viewHelp() {
+  const content = byId("content");
+  clear(content);
+
+  // Intro / principle.
+  content.appendChild(el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "ProcWorks \u2013 Hilfe")),
+    el("div", { class: "panel-b" },
+      el("p", { class: "muted" },
+        "ProcWorks h\u00E4lt jedes Modell \u201Ekorrekt per Konstruktion\u201C: Das Werkzeug ",
+        "bietet nur Operationen an, die das Modell g\u00FCltig halten. Einen ",
+        "\u201EValidieren\u201C-Knopf gibt es bewusst nicht \u2013 was noch zur Ausf\u00FChrbarkeit ",
+        "fehlt, zeigt die Befunde-Liste laufend an."))));
+
+  // The seven views.
+  content.appendChild(el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Die Sichten im \u00DCberblick")),
+    el("div", { class: "panel-b" },
+      table(["Sicht", "Wof\u00FCr"], HELP_VIEWS.map(([n, d]) => [n, d])))));
+
+  // Role-oriented quick starts with deep links to the how-to docs.
+  content.appendChild(el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Schnellstart je Rolle")),
+    el("div", { class: "panel-b" },
+      table(["Rolle", "Ziel", "Anleitung"], HELP_QUICKSTART.map(([role, goal, doc]) => [
+        role, goal,
+        el("a", { href: DOCS_BASE + doc, target: "_blank", rel: "noopener" }, doc),
+      ])))));
+
+  // Glossary of rule codes, grouped by family.
+  const glossary = el("div", { class: "panel-b" });
+  for (const [group, rules] of HELP_RULES) {
+    glossary.appendChild(el("div", { class: "sub-h" }, el("h3", null, group)));
+    glossary.appendChild(table(["Code", "Bedeutung"], rules.map(([c, m]) => [
+      el("span", { class: "pill pill-gray" }, c), m,
+    ])));
+  }
+  content.appendChild(el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Glossar der Regel-Codes"),
+      el("span", { class: "spacer", style: "flex:1" }),
+      el("span", { class: "muted", style: "font-size:12px" }, "erscheinen in Befunden & Fehlermeldungen")),
+    glossary));
+
+  // Further reading.
+  content.appendChild(el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Weiterf\u00FChrend")),
+    el("div", { class: "panel-b" },
+      el("ul", { style: "margin:4px 0;padding-left:18px;line-height:1.7" },
+        el("li", null, el("a", { href: DOCS_BASE + "README.md", target: "_blank", rel: "noopener" }, "Dokumentations-\u00DCbersicht (nach Rolle)")),
+        el("li", null, el("a", { href: DOCS_BASE + "Architektur-Konzept-Prozessmodellierung.md", target: "_blank", rel: "noopener" }, "Architektur-Konzept (Korrektheitskriterien, \u00A73)")),
+        el("li", null, el("a", { href: "https://github.com/tobiasHaecker/procworks/blob/main/DISCLAIMER.md", target: "_blank", rel: "noopener" }, "Haftungsausschluss"))))));
 }
 
 // --------------------------------------------------------------------------
@@ -2064,6 +2413,7 @@ const VIEW_META = {
   tasks: { title: "Meine Aufgaben", sub: "Bearbeiter-Aufgabenliste mit Z-Laufzeitaufl\u00F6sung", fn: viewTasks },
   monitor: { title: "Monitoring", sub: "Live-Status aktiver Instanzen", fn: viewMonitor },
   integration: { title: "Integration", sub: "Connectoren, Datenanbindung, Automatik & Webhooks", fn: viewIntegration },
+  help: { title: "Hilfe", sub: "Sichten, Schnellstart je Rolle & Glossar der Regel-Codes", fn: viewHelp },
 };
 
 function setActiveNav() {
@@ -2085,6 +2435,7 @@ const VIEW_ROLES = {
   tasks: ["operator", "modeler", "admin"],
   monitor: ["viewer", "operator", "modeler", "admin"],
   integration: ["modeler", "admin"],
+  help: ["viewer", "operator", "modeler", "admin"],
 };
 
 function currentRoles() {
@@ -2387,6 +2738,11 @@ function wireNav() {
     const btn = e.target.closest("button[data-view]");
     if (!btn) return;
     state.view = btn.dataset.view;
+    // A direct nav click is a fresh intent -- drop any badge-driven highlight.
+    state.dataFocusNode = null;
+    state.staffFocusNode = null;
+    state.orgFocusUnit = null;
+    state.orgFocusAgents = [];
     render();
   });
   const apiInput = byId("api-base");

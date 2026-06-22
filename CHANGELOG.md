@@ -9,6 +9,56 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Organigramm & Abteilungs-/Agenten-Hervorhebung in der Ressourcensicht**
+  (Web-Client, rein additiv): Rechts unter „Ressourcen-Befunde" zeigt ein
+  **Organigramm** die modellierte Organisation (Abteilungs-Hierarchie mit
+  Vorgesetztem und Agenten-Anzahl je Einheit) als klassisches Org-Chart.
+  - **Klick auf eine Abteilung** (im Organigramm) hebt die gewählte Abteilung
+    – im Organigramm und im Abteilungsbaum – hervor und markiert **alle zu ihr
+    gehörenden Agenten inkl. Vorgesetztem** in der Agentenliste; ein
+    schließbares Hinweis-Banner erklärt die Hervorhebung.
+  - **Klick auf den Vorgesetzten** (★-Badge im Bereich „Abteilungen") hebt
+    diesen Vorgesetzten gezielt in der Agentenliste hervor.
+  - Reine Anzeige-/Navigationshilfe im Client; keine Backend- oder
+    Modelländerung.
+- **Audit-Verlauf: Bearbeiter in eigener Spalte** (Web-Client): Der
+  Audit-Verlauf einer Instanz stellt den **Bearbeiter (Akteur)** jetzt in einer
+  eigenen Spalte dar (mit Spaltenkopf „Zeit / Ereignis / Bearbeiter / Detail");
+  Ereignisse ohne handelnden Agenten werden als „System" ausgewiesen. Die Daten
+  stammen unverändert aus dem `agent_id`-Feld der Audit-Ereignisse.
+- **Nutzerhilfe & Dokumentation ausgebaut**:
+  - **In-App-Hilfe** (Web-Client, neue Sicht **„Hilfe"**, für alle Rollen
+    sichtbar): Kurzübersicht aller Sichten, Schnellstart je Rolle mit Deep-Links
+    zu den Anleitungen und ein **Glossar aller Regel-Codes** (K/D/C/Z/A/I/H/F/T/B/M/R/G),
+    die in der Befunde-Liste und in Fehlermeldungen erscheinen. Rein im Client,
+    keine Backend-Änderung.
+  - **[docs/Modellierer-Anleitung.md](docs/Modellierer-Anleitung.md)** (neu):
+    Schritt-für-Schritt vom neuen Schema über Schritte/Daten/Bearbeiter und
+    Testlauf bis zur Freigabe und Revision.
+  - **[docs/README.md](docs/README.md)** (neu): Dokumentations-Übersicht, die
+    nach Rolle (Modellierer / Sachbearbeiter / Administrator / Integrator) führt
+    und alle weiteren Dokumente listet.
+- **Verknüpfte Datenelemente & Bearbeiterzuordnung in der Kontrollflussansicht**
+  (Web-Client, rein additiv): Jeder Aktivitäts-/Teilprozess-Knoten zeigt jetzt
+  am unteren Rand kompakte Badges für seine **Datenbindungen** („Daten N“, mit
+  Tooltip der Elementnamen und Zugriffsmodi) und seine **Bearbeiterregel**
+  („Bearbeiter“, Tooltip mit der Regel).
+  - **Sprung in die jeweilige Ansicht**: Ein Klick auf das Daten-Badge öffnet die
+    **Datensicht**, ein Klick auf das Bearbeiter-Badge die **Ressourcensicht**
+    (Bearbeiterzuordnung); in der Live-Prozesslandkarte sind die Badges
+    informativ (ohne Sprung).
+  - **Hervorhebung des selektierten Schritts**: Die Zielansicht hebt die
+    zugehörige Zeile farbig hervor, scrollt sie in den Sichtbereich und zeigt
+ein schließbares Hinweis-Banner („Hervorhebung löschen“). Ein Wechsel über
+    die Navigation setzt die Hervorhebung zurück.
+
+### Geändert
+- **Monitoring-Ansicht neu sortiert** (Web-Client): Die **Live-Prozesslandkarte**
+  der ausgewählten Instanz wird jetzt direkt unter „Aktive Instanzen“
+  dargestellt; der Block **Wartung (Administrator)** rückt ganz nach unten, da
+  er selten benötigt wird und destruktive Aktionen enthält.
+
+### Hinzugefügt
 - **Integrationsschicht Phase P6 – HTTP-Push für Aktivitäten & Integrations-Dokumentation (Konzept §6.3)**:
   Die **Push-Seite** der ausgehenden Anbindung – ProcWorks ruft bei Aktivierung
   einer automatischen Aktivität aktiv ein konfiguriertes Tool-Endpoint auf
