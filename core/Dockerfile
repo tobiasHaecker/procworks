@@ -9,7 +9,7 @@
 # launches Uvicorn. Without DATABASE_URL the API runs against the in-memory
 # stores (demo only, no durability).
 
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 # Do not buffer stdout/stderr; no .pyc files in the container layer.
 ENV PYTHONUNBUFFERED=1 \
