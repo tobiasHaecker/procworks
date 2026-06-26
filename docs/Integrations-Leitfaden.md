@@ -108,10 +108,9 @@ curl -X POST https://host/v1/instances/instance_42/nodes/act_pruefen/complete \
      -H "Authorization: Bearer $TOKEN" \
      -d '{"agent_id": "a-erika", "data": {"geprueft": true}}'
 
-# XOR-Entscheidung treffen
-curl -X POST https://host/v1/instances/instance_42/nodes/split_1/decide \
-     -H "Authorization: Bearer $TOKEN" \
-     -d '{"target_node_id": "act_genehmigung"}'
+# XOR-Verzweigungen entscheidet die Engine automatisch aus den Instanzdaten
+# (vollständige, überschneidungsfreie Partition, K7) – es genügt, den
+# Diskriminator-Wert beim Abschließen des vorgelagerten Schritts zu übergeben.
 ```
 
 ### 2.3 Instanzdaten lesen
@@ -324,8 +323,7 @@ geprüft (kein Injection-Risiko).
 | `GET /v1/instances/{id}/tasks` | `data:read` | Offene Arbeitslisten-Einträge |
 | `GET /v1/instances/{id}/data` | `data:read` | Instanzdaten lesen |
 | `PUT /v1/instances/{id}/data` | `data:write` | Instanzdaten schreiben (typgeprüft) |
-| `POST /v1/instances/{id}/nodes/{nodeId}/complete` | `tasks:complete` | Aktivität abschließen |
-| `POST /v1/instances/{id}/nodes/{nodeId}/decide` | `tasks:complete` | XOR-Entscheidung treffen |
+| `POST /v1/instances/{id}/nodes/{nodeId}/complete` | `tasks:complete` | Aktivität abschließen (XOR-Zweige entscheidet die Engine automatisch, K7) |
 | `POST /v1/external-tasks/fetch-and-lock` | `tasks:fetch` | External Tasks abholen + sperren |
 | `POST /v1/external-tasks/{id}/complete` | `tasks:complete` | Aufgabe abschließen (auch Push-Callback) |
 | `POST /v1/external-tasks/{id}/failure` | `tasks:complete` | Transienter Fehler (Backoff-Retry) |

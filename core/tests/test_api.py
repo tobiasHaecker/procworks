@@ -28,14 +28,31 @@ def test_create_and_build_schema_via_api() -> None:
         json={"label": "Antrag prüfen", "after_node_id": "start"},
     )
     assert resp.status_code == 200
+    pruefen = next(
+        nid
+        for nid, n in client.get(f"/schemas/{sid}").json()["nodes"].items()
+        if n.get("label") == "Antrag prüfen"
+    )
+
+    resp = client.post(
+        f"/schemas/{sid}/data-elements",
+        json={"name": "betrag", "data_type": "INTEGER", "element_id": "betrag"},
+    )
+    assert resp.status_code == 200
+    resp = client.post(
+        f"/schemas/{sid}/data-access",
+        json={"node_id": pruefen, "element_id": "betrag", "mode": "WRITE"},
+    )
+    assert resp.status_code == 200
 
     resp = client.post(
         f"/schemas/{sid}/conditional-insert",
         json={
-            "after_node_id": "start",
+            "after_node_id": pruefen,
+            "discriminator": "betrag",
             "branches": [
-                {"condition": "betrag > 1000", "label": "Freigabe Leitung"},
-                {"condition": "betrag <= 1000", "label": "Freigabe Team"},
+                {"label": "Freigabe Leitung", "upper": 1001},
+                {"label": "Freigabe Team"},
             ],
         },
     )

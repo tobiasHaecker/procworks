@@ -8,7 +8,7 @@ additional, coarse protection layer at the single API boundary
 
 * it establishes a server-side :class:`Principal` for every request (identity
   comes from a verified token, never from the request body), which structurally
-  closes the impersonation gap on ``/complete`` and ``/decide``; and
+  closes the impersonation gap on ``/complete``; and
 * it offers coarse role-based access control (RBAC) that *complements* the
   core's eligibility checks.
 
@@ -79,10 +79,9 @@ class Principal(BaseModel):
     """The verified, server-derived identity behind a single request.
 
     ``agent_id`` binds the caller to a concrete ProcWorks agent. Only this id is
-    handed to :func:`procworks.execution.complete_activity` /
-    :func:`procworks.execution.decide_branch`; it is never taken from the body.
-    ``roles`` drives the coarse boundary RBAC, orthogonal to the core's
-    fine-grained BZR eligibility.
+    handed to :func:`procworks.execution.complete_activity`; it is never taken
+    from the body. ``roles`` drives the coarse boundary RBAC, orthogonal to the
+    core's fine-grained BZR eligibility.
     """
 
     subject: str = Field(..., examples=["anna"])
@@ -116,7 +115,7 @@ class OpenAuthBackend:
     """Default dev/test backend: an anonymous principal with every role.
 
     No identity is required and ``agent_id`` is left unbound, so callers of
-    ``/complete`` and ``/decide`` may still name an ``agent_id`` (the core BZR
+    ``/complete`` may still name an ``agent_id`` (the core BZR
     check keeps correctness intact). This preserves today's behaviour when no
     auth is configured.
     """

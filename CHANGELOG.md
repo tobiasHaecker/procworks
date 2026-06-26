@@ -8,6 +8,31 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
+### Geändert
+- **XOR-Verzweigungen sind jetzt „Correctness by Construction" (K7
+  konstruktiv erzwungen):** Ein XOR-Split trägt keine frei formulierbaren
+  Bedingungen mehr, sondern eine **strukturierte, entscheidbare Partition** über
+  genau einem typisierten **Diskriminator-Datenelement**. Drei Formen werden
+  unterstützt – **THRESHOLD** (INTEGER/FLOAT, strikt aufsteigende Obergrenzen,
+  letzter Zweig offen), **BOOLEAN** (genau zwei Zweige true/false) und **ENUM**
+  (STRING, disjunkte Wertelisten plus genau ein *otherwise*-Zweig). Damit ist
+  jede Verzweigung per Konstruktion **vollständig** (es trifft immer genau ein
+  Zweig) und **überlappungsfrei** (nie können mehrere Pfade aktiviert werden);
+  inkonsistente, lückenhafte oder OR-artige Bedingungen sind **nicht
+  modellierbar**. Der Diskriminator muss auf allen Pfaden vor dem Split
+  geschrieben sein, sodass weder Deadlock noch Livelock entstehen kann. Die
+  Eigenschaft ist Teil der Korrektheitsinvariante I und bleibt über die gesamte
+  **Modell-Evolution** (neue Revision, Instanzmigration, Ad-hoc-Änderung)
+  erhalten.
+  - Die Ausführungs-Engine **wählt den Zweig automatisch** aus den Instanzdaten
+    aus; der frühere manuelle Entscheidungsschritt (`/instances/{id}/decide`,
+    „Zweig wählen") entfällt ersatzlos.
+  - `conditional-insert` (API/Web/Kern-Operation) erwartet jetzt einen
+    `discriminator` und eine `branches`-Partition statt freier Bedingungstexte.
+  - BPMN-Export/-Import transportieren die Datenebene (Datenelemente,
+    Datenzugriffe, XOR-Partition) verlustfrei über eine prozessweite
+    `procworks:model`-Erweiterung, damit K7-Modelle round-trip-fähig bleiben.
+
 ### Hinzugefügt
 - **Organigramm & Abteilungs-/Agenten-Hervorhebung in der Ressourcensicht**
   (Web-Client, rein additiv): Rechts unter „Ressourcen-Befunde" zeigt ein

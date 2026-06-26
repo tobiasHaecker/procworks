@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from procworks import (
+    BranchSpec,
     add_data_element,
     conditional_insert,
     connect_data,
@@ -20,6 +21,28 @@ from procworks.validator import CorrectnessError
 
 def _activity_ids(schema, label):
     return [n.id for n in schema.nodes.values() if n.label == label]
+
+
+def _conditional_over_flag(schema_id):
+    """A schema whose XOR split is driven by a discriminator written first.
+
+    "Erfassen" writes the INTEGER ``flag`` before the split, so the partition
+    (``< 1`` -> Zweig A, ``>= 1`` -> Zweig B) satisfies K7. Branch-specific data
+    flow is then tested with a *separate* element.
+    """
+
+    schema = create_empty_schema("XOR", schema_id=schema_id)
+    schema = serial_insert(schema, "Erfassen", after_node_id="start")
+    erfassen = _activity_ids(schema, "Erfassen")[0]
+    schema = add_data_element(schema, "flag", DataType.INTEGER, element_id="flag")
+    schema = connect_data(schema, erfassen, "flag", AccessMode.WRITE)
+    schema = conditional_insert(
+        schema,
+        after_node_id=erfassen,
+        discriminator="flag",
+        branches=[BranchSpec(label="Zweig A", upper=1), BranchSpec(label="Zweig B")],
+    )
+    return schema
 
 
 def test_add_data_element_and_write_then_read_is_correct():
@@ -52,12 +75,7 @@ def test_d1_rejects_read_before_write():
 
 
 def test_d1_write_only_in_one_xor_branch_is_rejected_after_join():
-    schema = create_empty_schema("XOR", schema_id="d1xor")
-    schema = conditional_insert(
-        schema,
-        [("a > 0", "Zweig A"), ("a <= 0", "Zweig B")],
-        after_node_id="start",
-    )
+    schema = _conditional_over_flag("d1xor")
     branch_a = _activity_ids(schema, "Zweig A")[0]
     # Insert an activity after the XOR-join (between join and end).
     join_id = next(
@@ -76,12 +94,7 @@ def test_d1_write_only_in_one_xor_branch_is_rejected_after_join():
 
 
 def test_d1_write_in_all_xor_branches_supplies_after_join():
-    schema = create_empty_schema("XOR", schema_id="d1xorok")
-    schema = conditional_insert(
-        schema,
-        [("a > 0", "Zweig A"), ("a <= 0", "Zweig B")],
-        after_node_id="start",
-    )
+    schema = _conditional_over_flag("d1xorok")
     branch_a = _activity_ids(schema, "Zweig A")[0]
     branch_b = _activity_ids(schema, "Zweig B")[0]
     join_id = next(e.target for e in schema.outgoing(branch_a))

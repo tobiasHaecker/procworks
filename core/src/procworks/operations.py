@@ -14,6 +14,7 @@ Correctness by Construction in practice.
 from __future__ import annotations
 
 import itertools
+from dataclasses import dataclass
 
 from procworks.model import (
     JOIN_TYPES,
@@ -48,6 +49,10 @@ from procworks.model import (
     TimeConstraint,
     ValueClass,
     WorkItemPriority,
+    XorBranch,
+    XorDecision,
+    discriminator_kind,
+    xor_condition_text,
 )
 from procworks.validator import (
     CorrectnessError,
@@ -178,18 +183,48 @@ def parallel_insert(
         raise CorrectnessError(
             [ValidationFinding(rule="OP", message="parallel_insert requires at least 2 branches")]
         )
-    return _insert_block(schema, after_node_id, NodeType.AND_SPLIT, branch_labels, conditions=None)
+    return _insert_block(schema, after_node_id, NodeType.AND_SPLIT, branch_labels)
+
+
+@dataclass(frozen=True)
+class BranchSpec:
+    """One requested XOR branch: a body label plus its partition cell (K7).
+
+    The cell fields are interpreted per the discriminator's derived kind:
+    ``upper`` for THRESHOLD (the last branch leaves it ``None`` for ``+inf``),
+    ``bool_value`` for BOOLEAN, and ``values``/``is_else`` for ENUM. Callers only
+    describe the partition; :func:`conditional_insert` wires the bodies and emits
+    the structured :class:`~procworks.model.XorDecision`.
+    """
+
+    label: str
+    upper: float | None = None
+    bool_value: bool | None = None
+    values: tuple[str, ...] = ()
+    is_else: bool = False
 
 
 def conditional_insert(
-    schema: ProcessSchema, branches: list[tuple[str, str]], after_node_id: str
+    schema: ProcessSchema,
+    after_node_id: str,
+    *,
+    discriminator: str,
+    branches: list[BranchSpec],
 ) -> ProcessSchema:
-    """Insert a balanced XOR block after the anchor.
+    """Insert a balanced XOR block governed by a structured partition (K7).
 
-    ``branches`` is a list of (condition, label) pairs.
+    ``discriminator`` is the id of an instance data element whose typed value
+    selects the branch; ``branches`` describe a *total, disjoint* partition of
+    that element's domain (the kind -- THRESHOLD/BOOLEAN/ENUM -- is derived from
+    the element's type). The resulting :class:`XorDecision` makes exactly one
+    branch enabled for every value, so the split can neither deadlock nor
+    activate several paths -- and the validator (K7) refuses any other shape.
 
-    requires: schema editable; anchor exists and is not END; >= 2 branches.
-    ensures:  XOR_SPLIT/XOR_JOIN with N conditional activity branches; K1-K3 hold.
+    requires: schema editable; anchor exists and is not END; discriminator is a
+              partitionable instance element; >= 2 branches forming a valid
+              partition for the derived kind.
+    ensures:  XOR_SPLIT/XOR_JOIN with one body per branch, a stored XorDecision,
+              and derived edge captions; K1-K3, K7 and the data-flow rules hold.
     """
 
     if len(branches) < 2:
@@ -200,9 +235,74 @@ def conditional_insert(
                 )
             ]
         )
-    labels = [label for _, label in branches]
-    conditions = [cond for cond, _ in branches]
-    return _insert_block(schema, after_node_id, NodeType.XOR_SPLIT, labels, conditions)
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    anchor = _require_node(candidate, after_node_id)
+    if anchor.type is NodeType.END:
+        raise CorrectnessError(
+            [ValidationFinding(rule="OP", node_id=after_node_id, message="cannot insert after END")]
+        )
+    element = candidate.data_elements.get(discriminator)
+    if element is None:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    message=f"unknown discriminator data element '{discriminator}'",
+                )
+            ]
+        )
+    kind = discriminator_kind(element.data_type)
+    if kind is None:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    message=(
+                        f"data type {element.data_type.value} "
+                        "cannot be used as an XOR discriminator"
+                    ),
+                )
+            ]
+        )
+
+    edge = _single_outgoing(candidate, after_node_id)
+    successor_id = edge.target
+
+    split = Node(id=_new_id("split"), type=NodeType.XOR_SPLIT)
+    join = Node(id=_new_id("join"), type=NodeType.XOR_JOIN)
+    candidate.nodes[split.id] = split
+    candidate.nodes[join.id] = join
+    candidate.edges.remove(edge)
+    candidate.edges.append(ControlEdge(source=after_node_id, target=split.id))
+    candidate.edges.append(ControlEdge(source=join.id, target=successor_id))
+
+    xor_branches: list[XorBranch] = []
+    body_edges: list[ControlEdge] = []
+    for spec in branches:
+        body = Node(id=_new_id("act"), type=NodeType.ACTIVITY, label=spec.label)
+        candidate.nodes[body.id] = body
+        xor_branches.append(
+            XorBranch(
+                target=body.id,
+                upper=spec.upper,
+                bool_value=spec.bool_value,
+                values=list(spec.values),
+                is_else=spec.is_else,
+            )
+        )
+        split_edge = ControlEdge(source=split.id, target=body.id)
+        candidate.edges.append(split_edge)
+        candidate.edges.append(ControlEdge(source=body.id, target=join.id))
+        body_edges.append(split_edge)
+
+    decision = XorDecision(discriminator=discriminator, kind=kind, branches=xor_branches)
+    candidate.xor_decisions[split.id] = decision
+    for index, split_edge in enumerate(body_edges):
+        split_edge.condition = xor_condition_text(element.name, decision, index)
+
+    return raise_if_invalid(candidate)
 
 
 def _insert_block(
@@ -210,7 +310,6 @@ def _insert_block(
     after_node_id: str,
     split_type: NodeType,
     branch_labels: list[str],
-    conditions: list[str] | None,
 ) -> ProcessSchema:
     candidate = schema.model_copy(deep=True)
     _require_editable(candidate)
@@ -236,13 +335,10 @@ def _insert_block(
     candidate.edges.append(ControlEdge(source=after_node_id, target=split.id))
     candidate.edges.append(ControlEdge(source=join.id, target=successor_id))
 
-    for i, label in enumerate(branch_labels):
+    for label in branch_labels:
         branch = Node(id=_new_id("act"), type=NodeType.ACTIVITY, label=label)
         candidate.nodes[branch.id] = branch
-        condition = conditions[i] if conditions is not None else None
-        candidate.edges.append(
-            ControlEdge(source=split.id, target=branch.id, condition=condition)
-        )
+        candidate.edges.append(ControlEdge(source=split.id, target=branch.id))
         candidate.edges.append(ControlEdge(source=branch.id, target=join.id))
 
     return raise_if_invalid(candidate)
@@ -324,6 +420,7 @@ def _drop_nodes(candidate: ProcessSchema, to_remove: set[str]) -> None:
         candidate.staff_rules.pop(removed, None)
         candidate.service_bindings.pop(removed, None)
         candidate.sub_process_bindings.pop(removed, None)
+        candidate.xor_decisions.pop(removed, None)
     candidate.data_accesses = [
         a for a in candidate.data_accesses if a.node_id not in to_remove
     ]
@@ -347,6 +444,12 @@ def _delete_single_node_branch(
     remaining = candidate.outgoing(split_id)
     if len(remaining) >= 2:
         # The gateway still has at least two branches -> just drop this one.
+        # Keep the structured decision in sync; removing a single branch leaves
+        # a gap in the partition, so K7 (re-checked below) rejects unless the
+        # remaining cells still tile the domain -- exactly the CbC guarantee.
+        decision = candidate.xor_decisions.get(split_id)
+        if decision is not None:
+            decision.branches = [b for b in decision.branches if b.target != node_id]
         _drop_nodes(candidate, {node_id})
         return raise_if_invalid(candidate)
 

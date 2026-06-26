@@ -10,7 +10,12 @@ non-blocking hint behaviour.
 from __future__ import annotations
 
 from procworks import (
+    AccessMode,
+    BranchSpec,
+    DataType,
+    add_data_element,
     conditional_insert,
+    connect_data,
     create_empty_schema,
     model_hints,
     model_metrics,
@@ -56,10 +61,13 @@ def test_metrics_gateway_heterogeneity_and_depth() -> None:
     schema = create_empty_schema("Mix", schema_id="m2")
     schema = parallel_insert(schema, ["P1", "P2"], after_node_id="start")
     p1 = _activity_id(schema, "P1")
+    schema = add_data_element(schema, "x", DataType.INTEGER, element_id="x")
+    schema = connect_data(schema, p1, "x", AccessMode.WRITE)
     schema = conditional_insert(
         schema,
-        [("x > 0", "C1"), ("x <= 0", "C2")],
         after_node_id=p1,
+        discriminator="x",
+        branches=[BranchSpec(label="C1", upper=1), BranchSpec(label="C2")],
     )
     metrics = model_metrics(schema)
     assert metrics.gateway_heterogeneity == 2  # AND and XOR both present

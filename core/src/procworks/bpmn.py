@@ -24,21 +24,34 @@ The mapping uses semantic BPMN only (no diagram interchange / layout):
 
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ET
+
+from pydantic import TypeAdapter
 
 from procworks.model import (
     ControlEdge,
+    DataAccess,
+    DataElement,
     EdgeType,
     Node,
     NodeType,
     ProcessSchema,
+    XorDecision,
 )
 from procworks.validator import SchemaResolver, raise_if_invalid
+
+_DATA_ELEMENTS = TypeAdapter(list[DataElement])
+_DATA_ACCESSES = TypeAdapter(list[DataAccess])
+_XOR_DECISIONS = TypeAdapter(dict[str, XorDecision])
 
 #: BPMN 2.0 semantic model namespace (OMG / ISO 19510).
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 #: XML Schema instance namespace (for conditionExpression xsi:type).
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+#: ProcWorks extension namespace, used to round-trip the structured XOR branch
+#: partition (K7) -- which standard BPMN cannot express -- via extensionElements.
+PROCWORKS_NS = "https://procworks/bpmn/ext"
 #: Target namespace of exported definitions.
 TARGET_NS = "https://procworks/bpmn"
 
@@ -72,6 +85,7 @@ def export_bpmn(schema: ProcessSchema) -> str:
 
     ET.register_namespace("bpmn", BPMN_NS)
     ET.register_namespace("xsi", XSI_NS)
+    ET.register_namespace("procworks", PROCWORKS_NS)
     definitions = ET.Element(
         f"{{{BPMN_NS}}}definitions",
         {"id": f"defs_{schema.id}", "targetNamespace": TARGET_NS},
@@ -103,8 +117,31 @@ def export_bpmn(schema: ProcessSchema) -> str:
                 {f"{{{XSI_NS}}}type": "bpmn:tFormalExpression"},
             )
             condition.text = edge.condition
+    _export_procworks_model(process, schema)
     ET.indent(definitions)
     return ET.tostring(definitions, encoding="unicode", xml_declaration=True)
+
+
+def _export_procworks_model(process: ET.Element, schema: ProcessSchema) -> None:
+    """Round-trip the data layer BPMN cannot express (elements, accesses, K7).
+
+    Standard BPMN only carries control flow; the structured XOR partition (K7)
+    and its typed discriminator live in a ProcWorks extension so an exported
+    document re-imports to the very same, still-correct schema.
+    """
+
+    if not (schema.data_elements or schema.data_accesses or schema.xor_decisions):
+        return
+    extensions = ET.SubElement(process, f"{{{BPMN_NS}}}extensionElements")
+    payload = {
+        "data_elements": [e.model_dump(mode="json") for e in schema.data_elements.values()],
+        "data_accesses": [a.model_dump(mode="json") for a in schema.data_accesses],
+        "xor_decisions": {
+            nid: d.model_dump(mode="json") for nid, d in schema.xor_decisions.items()
+        },
+    }
+    model = ET.SubElement(extensions, f"{{{PROCWORKS_NS}}}model")
+    model.text = json.dumps(payload)
 
 
 # --- import --------------------------------------------------------------
@@ -158,6 +195,24 @@ def _condition_of(flow: ET.Element) -> str | None:
             text = (child.text or "").strip()
             return text or None
     return None
+
+
+def _procworks_model_of(process: ET.Element) -> dict[str, object]:
+    """Parse the ProcWorks data-layer extension (elements, accesses, K7)."""
+
+    for descendant in process.iter():
+        if _localname(descendant.tag) == "model":
+            text = (descendant.text or "").strip()
+            if not text:
+                return {}
+            try:
+                parsed = json.loads(text)
+            except ValueError as exc:
+                raise BpmnError(f"invalid procworks:model payload: {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise BpmnError("procworks:model payload must be an object")
+            return parsed
+    return {}
 
 
 def import_bpmn(
@@ -220,11 +275,20 @@ def import_bpmn(
         ControlEdge(source=s, target=t, type=EdgeType.CONTROL, condition=c)
         for s, t, c in flows
     ]
+    model = _procworks_model_of(process)
+    data_elements = {
+        e.id: e for e in _DATA_ELEMENTS.validate_python(model.get("data_elements", []))
+    }
+    data_accesses = _DATA_ACCESSES.validate_python(model.get("data_accesses", []))
+    xor_decisions = _XOR_DECISIONS.validate_python(model.get("xor_decisions", {}))
     schema = ProcessSchema(
         id=schema_id or process.get("id") or "imported",
         name=name or process.get("name") or "Imported",
         nodes=nodes,
         edges=edges,
+        data_elements=data_elements,
+        data_accesses=data_accesses,
+        xor_decisions=xor_decisions,
     )
     return raise_if_invalid(schema, resolver)
 

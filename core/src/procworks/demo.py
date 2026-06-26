@@ -121,17 +121,29 @@ def _build_urlaubsantrag(org: OrgModel) -> ProcessSchema:
     erfassen = _nid(s, "Antrag erfassen")
     s = ops.serial_insert(s, "Antrag pr\u00fcfen", after_node_id=erfassen)
     pruefen = _nid(s, "Antrag pr\u00fcfen")
-    s = ops.conditional_insert(
-        s,
-        [("tage <= 10", "Genehmigung durch Leitung"), ("tage > 10", "Ablehnung dokumentieren")],
-        after_node_id=pruefen,
-    )
-    join = _gateway_id(s, NodeType.XOR_JOIN)
-    s = ops.serial_insert(s, "Mitarbeiter benachrichtigen", after_node_id=join)
 
+    # The branch discriminator must exist and be guaranteed written before the
+    # split, so the data element and its mandatory write are added first (K7):
+    # "Antrag erfassen" writes the number of days, "Antrag pruefen" reads it.
     s = ops.add_data_element(s, "Urlaubstage", DataType.INTEGER, element_id="tage")
     s = ops.connect_data(s, erfassen, "tage", AccessMode.WRITE)
     s = ops.connect_data(s, pruefen, "tage", AccessMode.READ)
+
+    # Structured XOR partition over "tage" (INTEGER -> THRESHOLD): up to 10 days
+    # is approved by the team lead, 11 or more days is rejected. The two cells
+    # tile the whole number line (< 11 and >= 11), so exactly one branch is ever
+    # enabled -- the engine resolves it automatically from the instance data.
+    s = ops.conditional_insert(
+        s,
+        after_node_id=pruefen,
+        discriminator="tage",
+        branches=[
+            ops.BranchSpec(label="Genehmigung durch Leitung", upper=11),
+            ops.BranchSpec(label="Ablehnung dokumentieren"),
+        ],
+    )
+    join = _gateway_id(s, NodeType.XOR_JOIN)
+    s = ops.serial_insert(s, "Mitarbeiter benachrichtigen", after_node_id=join)
 
     # A second data object that *travels and is enriched along the flow*: the
     # decision is filled in by whichever XOR branch runs (approval or rejection)
@@ -236,27 +248,6 @@ def _complete(
     return after
 
 
-def _decide(
-    schema: ProcessSchema,
-    inst: ProcessInstance,
-    split_id: str,
-    target_node_id: str,
-    ctx: exe.ExecutionContext,
-    audit: AuditLog,
-) -> ProcessInstance:
-    after = exe.decide_branch(inst, schema, split_id, target_node_id, context=ctx)
-    _emit(
-        audit,
-        EventType.BRANCH_DECIDED,
-        after,
-        node_id=split_id,
-        label=_label(schema, split_id),
-        detail={"target_node_id": target_node_id},
-    )
-    ctx.instances.put(after)
-    return after
-
-
 def _seed_instances(
     schema: ProcessSchema, instance_store: InstanceStore, audit: AuditLog
 ) -> None:
@@ -265,27 +256,26 @@ def _seed_instances(
     ctx = exe.ExecutionContext(make_resolver(_NoopSchemaStore()), instance_store)
     erfassen = _nid(schema, "Antrag erfassen")
     pruefen = _nid(schema, "Antrag pr\u00fcfen")
-    split = _gateway_id(schema, NodeType.XOR_SPLIT)
-    genehmigung = _nid(schema, "Genehmigung durch Leitung")
     ablehnung = _nid(schema, "Ablehnung dokumentieren")
     benachrichtigen = _nid(schema, "Mitarbeiter benachrichtigen")
 
     # 1) Freshly started -- waiting at the very first activity.
     _start(schema, ctx, audit, "urlaub-2026-001")
 
-    # 2) In progress -- captured and checked, now awaiting management approval.
+    # 2) In progress -- captured and checked. With 8 days recorded the XOR split
+    # resolves itself (8 < 11) to the approval branch, so the instance now waits
+    # at "Genehmigung durch Leitung" without any manual decision.
     i2 = _start(schema, ctx, audit, "urlaub-2026-002")
     i2 = _complete(schema, i2, erfassen, ctx, audit, agent_id="a-erika", data={"tage": 8})
-    i2 = _complete(schema, i2, pruefen, ctx, audit, agent_id="a-erika")
-    _decide(schema, i2, split, genehmigung, ctx, audit)
+    _complete(schema, i2, pruefen, ctx, audit, agent_id="a-erika")
 
-    # 3) Finished -- a rejected request that ran all the way to the end. The
+    # 3) Finished -- a rejected request that ran all the way to the end. With 20
+    # days recorded the split resolves to the rejection branch (20 >= 11). The
     # "entscheidung" object is written by the rejection step and then read by
     # the notification, so the finished instance carries the enriched value.
     i3 = _start(schema, ctx, audit, "urlaub-2026-003")
     i3 = _complete(schema, i3, erfassen, ctx, audit, agent_id="a-erika", data={"tage": 20})
     i3 = _complete(schema, i3, pruefen, ctx, audit, agent_id="a-erika")
-    i3 = _decide(schema, i3, split, ablehnung, ctx, audit)
     i3 = _complete(
         schema,
         i3,

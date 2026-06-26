@@ -837,20 +837,75 @@ function openInsertModal(afterNodeId) {
   const serialBody = el("label", { class: "field" }, "Bezeichnung",
     el("input", { type: "text", id: "ins-label", placeholder: "z. B. Antrag pr\u00FCfen" }));
   const parBox = el("div", { class: "row", style: "flex-direction:column;align-items:stretch;gap:8px" });
-  const condBox = el("div", { class: "row", style: "flex-direction:column;align-items:stretch;gap:8px" });
   function addParRow(val) {
     parBox.appendChild(el("input", { type: "text", class: "par-branch", placeholder: "Zweig-Bezeichnung", value: val || "" }));
   }
-  function addCondRow() {
-    condBox.appendChild(el("div", { class: "branch-row" },
-      el("input", { type: "text", class: "cond-cond", placeholder: "Bedingung, z. B. betrag > 1000" }),
-      el("input", { type: "text", class: "cond-label", placeholder: "Bezeichnung" })));
+  // --- XOR partition builder (K7): a typed discriminator drives the branches.
+  const partitionable = Object.values(state.schema.data_elements).filter(
+    (d) => d.source === "INSTANCE" && ["INTEGER", "FLOAT", "BOOLEAN", "STRING"].includes(d.data_type));
+  const condDisc = el("select", { class: "cond-disc" },
+    ...partitionable.map((d) => el("option", { value: d.id }, `${d.name} (${d.data_type})`)));
+  const condRows = el("div", { class: "row", style: "flex-direction:column;align-items:stretch;gap:8px" });
+  function discKind() {
+    const elem = state.schema.data_elements[condDisc.value];
+    if (!elem) return null;
+    if (elem.data_type === "INTEGER" || elem.data_type === "FLOAT") return "THRESHOLD";
+    if (elem.data_type === "BOOLEAN") return "BOOLEAN";
+    if (elem.data_type === "STRING") return "ENUM";
+    return null;
   }
-  addParRow(); addParRow(); addCondRow(); addCondRow();
+  function addThresholdRow(last) {
+    condRows.appendChild(el("div", { class: "branch-row threshold-row" },
+      el("input", { type: "text", class: "cond-label", placeholder: "Bezeichnung" }),
+      el("input", { type: "number", class: "cond-upper", placeholder: last ? "Obergrenze leer = bis +\u221E" : "unter \u2026" })));
+  }
+  function addEnumRow() {
+    condRows.appendChild(el("div", { class: "branch-row enum-row" },
+      el("input", { type: "text", class: "cond-label", placeholder: "Bezeichnung" }),
+      el("input", { type: "text", class: "cond-values", placeholder: "Werte, kommagetrennt" })));
+  }
+  function rebuildCondRows() {
+    clear(condRows);
+    const kind = discKind();
+    if (kind === "THRESHOLD") { addThresholdRow(false); addThresholdRow(true); }
+    else if (kind === "BOOLEAN") {
+      condRows.appendChild(el("div", { class: "branch-row bool-row" },
+        el("span", { class: "muted" }, "wahr (true)"),
+        el("input", { type: "text", class: "cond-label", "data-bool": "true", placeholder: "Bezeichnung" })));
+      condRows.appendChild(el("div", { class: "branch-row bool-row" },
+        el("span", { class: "muted" }, "falsch (false)"),
+        el("input", { type: "text", class: "cond-label", "data-bool": "false", placeholder: "Bezeichnung" })));
+    } else if (kind === "ENUM") {
+      addEnumRow(); addEnumRow();
+      condRows.appendChild(el("div", { class: "branch-row else-row" },
+        el("span", { class: "muted" }, "Sonst (otherwise)"),
+        el("input", { type: "text", class: "cond-label", "data-else": "1", placeholder: "Bezeichnung" })));
+    }
+  }
+  function addCondRow() {
+    const kind = discKind();
+    if (kind === "THRESHOLD") {
+      const rows = condRows.querySelectorAll(".threshold-row");
+      addThresholdRow(false);
+      if (rows.length) condRows.insertBefore(condRows.lastChild, rows[rows.length - 1]);
+    } else if (kind === "ENUM") {
+      const elseRow = condRows.querySelector(".else-row");
+      addEnumRow();
+      if (elseRow) condRows.insertBefore(condRows.lastChild, elseRow);
+    }
+  }
+  condDisc.addEventListener("change", rebuildCondRows);
+  addParRow(); addParRow(); rebuildCondRows();
+  const condPanel = partitionable.length
+    ? el("div", null,
+        el("label", { class: "field" }, "Diskriminator (Datenelement)", condDisc),
+        el("div", { class: "muted", style: "font-size:12px;margin:4px 0" }, "Die Engine w\u00E4hlt den Zweig automatisch anhand des Werts \u2013 vollst\u00E4ndig und \u00FCberschneidungsfrei (K7)."),
+        condRows, el("button", { class: "btn small ghost", onClick: () => addCondRow() }, "+ Zweig"))
+    : el("div", { class: "muted", style: "font-size:13px" }, "Legen Sie zuerst ein Datenelement (INTEGER/FLOAT/BOOLEAN/STRING) an und lassen Sie es vor dieser Stelle schreiben.");
   const panels = {
     serial: serialBody,
     parallel: el("div", null, parBox, el("button", { class: "btn small ghost", onClick: () => addParRow() }, "+ Zweig")),
-    conditional: el("div", null, condBox, el("button", { class: "btn small ghost", onClick: () => addCondRow() }, "+ Zweig")),
+    conditional: condPanel,
   };
   const slot = el("div", null, panels.serial);
   const tabs = el("div", { class: "tabs" },
@@ -878,12 +933,39 @@ function openInsertModal(afterNodeId) {
         if (labels.length < 2) { toast("err", "Mindestens zwei Zweige n\u00F6tig"); return false; }
         await api.post(`/schemas/${state.schemaId}/parallel-insert`, { branch_labels: labels, after_node_id: afterNodeId });
       } else {
-        const rows = [...condBox.querySelectorAll(".branch-row")].map((r) => ({
-          condition: r.querySelector(".cond-cond").value.trim(),
-          label: r.querySelector(".cond-label").value.trim(),
-        })).filter((b) => b.condition && b.label);
-        if (rows.length < 2) { toast("err", "Mindestens zwei Zweige mit Bedingung n\u00F6tig"); return false; }
-        await api.post(`/schemas/${state.schemaId}/conditional-insert`, { branches: rows, after_node_id: afterNodeId });
+        const kind = discKind();
+        if (!kind) { toast("err", "Kein g\u00FCltiger Diskriminator gew\u00E4hlt"); return false; }
+        let branches = [];
+        if (kind === "THRESHOLD") {
+          const rows = [...condRows.querySelectorAll(".threshold-row")].map((r) => ({
+            label: r.querySelector(".cond-label").value.trim(),
+            upperRaw: r.querySelector(".cond-upper").value.trim(),
+          })).filter((b) => b.label);
+          if (rows.length < 2) { toast("err", "Mindestens zwei Stufen n\u00F6tig"); return false; }
+          const unbounded = rows.filter((b) => b.upperRaw === "");
+          if (unbounded.length !== 1) { toast("err", "Genau eine Stufe muss ohne Obergrenze (bis +\u221E) sein"); return false; }
+          const bounded = rows.filter((b) => b.upperRaw !== "")
+            .map((b) => ({ label: b.label, upper: Number(b.upperRaw) }))
+            .sort((a, b) => a.upper - b.upper);
+          branches = [...bounded, { label: unbounded[0].label }];
+        } else if (kind === "BOOLEAN") {
+          branches = [...condRows.querySelectorAll(".cond-label")]
+            .map((i) => ({ label: i.value.trim(), bool_value: i.dataset.bool === "true" }))
+            .filter((b) => b.label);
+          if (branches.length !== 2) { toast("err", "Beide F\u00E4lle (wahr/falsch) ben\u00F6tigen eine Bezeichnung"); return false; }
+        } else {
+          branches = [...condRows.children].map((r) => {
+            const labelEl = r.querySelector(".cond-label");
+            const valuesEl = r.querySelector(".cond-values");
+            if (!labelEl || !labelEl.value.trim()) return null;
+            if (labelEl.dataset.else) return { label: labelEl.value.trim(), is_else: true };
+            const values = (valuesEl ? valuesEl.value : "").split(",").map((v) => v.trim()).filter(Boolean);
+            if (!values.length) return null;
+            return { label: labelEl.value.trim(), values };
+          }).filter(Boolean);
+          if (branches.length < 2) { toast("err", "Mindestens ein Wertzweig plus Sonst-Zweig n\u00F6tig"); return false; }
+        }
+        await api.post(`/schemas/${state.schemaId}/conditional-insert`, { after_node_id: afterNodeId, discriminator: condDisc.value, branches });
       }
       await refreshSchema();
       render();
@@ -1534,14 +1616,7 @@ async function renderInstanceDetail(container, withActions) {
         el("span", { class: "tag" }, "bereit"),
         withActions ? el("button", { class: "btn small green", onClick: () => completeActivity(nid, node) }, "Abschlie\u00DFen") : null));
     });
-    (wl.pending_decisions || []).forEach((nid) => {
-      const node = runSchema.nodes[nid];
-      wlBody.appendChild(el("div", { class: "worklist-item" },
-        el("span", { class: "name" }, (node ? nodeCaption(node) : nid) + " (XOR)"),
-        el("span", { class: "tag" }, "Entscheidung"),
-        withActions ? el("button", { class: "btn small primary", onClick: () => decideBranch(nid, runSchema) }, "Zweig w\u00E4hlen") : null));
-    });
-    if (!(wl.ready_activities || []).length && !(wl.pending_decisions || []).length) {
+    if (!(wl.ready_activities || []).length) {
       wlBody.appendChild(el("div", { class: "muted", style: "font-size:13px" }, "Keine bereiten Schritte (l\u00E4uft automatisch weiter oder wartet auf Teilprozess)."));
     }
   }
@@ -1623,20 +1698,6 @@ async function promptComplete(schema, instanceId, nodeId, label, agentId, onDone
   };
   if (writes.length) openModal(`Abschlie\u00DFen: ${label}`, body, doComplete, "Abschlie\u00DFen");
   else doComplete();
-}
-
-function decideBranch(nodeId, schema) {
-  const targets = (schema.edges || []).filter((e) => e.source === nodeId);
-  const sel = el("select", null, ...targets.map((e) => {
-    const tn = schema.nodes[e.target];
-    return el("option", { value: e.target }, (tn ? nodeCaption(tn) : e.target) + (e.condition ? ` [${e.condition}]` : ""));
-  }));
-  openModal("XOR-Zweig w\u00E4hlen", el("label", { class: "field" }, "Zielzweig", sel), async () => {
-    try {
-      await api.post(`/instances/${state.instanceId}/decide`, { node_id: nodeId, target_node_id: sel.value });
-      await loadInstance(state.instanceId); render(); toast("ok", "Zweig gew\u00E4hlt");
-    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
-  }, "W\u00E4hlen");
 }
 
 // --------------------------------------------------------------------------

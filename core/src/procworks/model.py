@@ -547,13 +547,150 @@ class FollowUpLink(BaseModel):
     mode: FollowUpMode = FollowUpMode.ASYNC
 
 
+class XorDecisionKind(StrEnum):
+    """How an XOR split partitions its discriminator's value domain (K7).
+
+    The kind is derived from the discriminator data element's type so the
+    partition is always decidable: ``THRESHOLD`` for ordered numbers
+    (INTEGER/FLOAT), ``BOOLEAN`` for booleans, ``ENUM`` for categorical strings.
+    Each kind admits a *total* and *disjoint* partition, so exactly one branch
+    is ever enabled (no deadlock, no multiple activation).
+    """
+
+    THRESHOLD = "THRESHOLD"
+    BOOLEAN = "BOOLEAN"
+    ENUM = "ENUM"
+
+
+class XorBranch(BaseModel):
+    """One cell of an XOR partition, bound to a branch body via ``target``.
+
+    The cell shape depends on the owning :class:`XorDecision`'s ``kind``:
+
+    - ``THRESHOLD``: the half-open interval ``[lower, upper)`` over the reals;
+      ``upper`` ``None`` means ``+inf``. The lower bound is implied by the
+      previous branch's ``upper`` (``-inf`` for the first) and is not stored, so
+      consecutive branches tile the whole number line without gap or overlap.
+    - ``BOOLEAN``: ``bool_value`` selects the ``true`` or ``false`` cell.
+    - ``ENUM``: ``values`` lists the matched strings; exactly one branch sets
+      ``is_else`` as the catch-all complement so every string is covered.
+    """
+
+    target: str
+    upper: float | None = None
+    bool_value: bool | None = None
+    values: list[str] = Field(default_factory=list)
+    is_else: bool = False
+
+
+class XorDecision(BaseModel):
+    """A total, disjoint partition of a discriminator element's domain (K7).
+
+    The ``branches`` are ordered and, by construction, partition the
+    discriminator's value domain completely and without overlap. The runtime
+    therefore always finds *exactly one* enabled branch from the instance data
+    (see :func:`resolve_xor_target`) -- the structural guarantee that no XOR
+    split can deadlock or activate several paths at once.
+    """
+
+    discriminator: str
+    kind: XorDecisionKind
+    branches: list[XorBranch] = Field(default_factory=list)
+
+
+def _fmt_bound(value: float) -> str:
+    """Render a numeric threshold without a trailing ``.0`` for whole numbers."""
+
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def discriminator_kind(data_type: DataType) -> XorDecisionKind | None:
+    """Map a discriminator element's type to its XOR partition kind (K7).
+
+    Returns ``None`` for types that cannot be partitioned decidably (DATE/URI),
+    which the validator turns into a finding. The mapping is the single source
+    of truth shared by the validator and the modelling operations.
+    """
+
+    return {
+        DataType.INTEGER: XorDecisionKind.THRESHOLD,
+        DataType.FLOAT: XorDecisionKind.THRESHOLD,
+        DataType.BOOLEAN: XorDecisionKind.BOOLEAN,
+        DataType.STRING: XorDecisionKind.ENUM,
+    }.get(data_type)
+
+
+def resolve_xor_target(decision: XorDecision, value: object) -> str | None:
+    """Return the branch target whose cell contains ``value`` (or ``None``).
+
+    A well-formed (K7-valid) decision always returns a target; ``None`` only
+    occurs for malformed data (e.g. a non-numeric value on a THRESHOLD split),
+    which the caller turns into a runtime error.
+    """
+
+    if decision.kind is XorDecisionKind.THRESHOLD:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        for branch in decision.branches:
+            if branch.upper is None or value < branch.upper:
+                return branch.target
+        return None
+    if decision.kind is XorDecisionKind.BOOLEAN:
+        truth = bool(value)
+        for branch in decision.branches:
+            if branch.bool_value is truth:
+                return branch.target
+        return None
+    # ENUM
+    text = str(value)
+    else_target: str | None = None
+    for branch in decision.branches:
+        if branch.is_else:
+            else_target = branch.target
+            continue
+        if text in branch.values:
+            return branch.target
+    return else_target
+
+
+def xor_condition_text(
+    discriminator_name: str, decision: XorDecision, index: int
+) -> str:
+    """Render a human-readable predicate for branch ``index`` (display only).
+
+    The structured :class:`XorDecision` is the source of truth; this string is a
+    derived caption used by the editor and the BPMN ``conditionExpression``.
+    """
+
+    branch = decision.branches[index]
+    disc = discriminator_name
+    if decision.kind is XorDecisionKind.THRESHOLD:
+        lower = decision.branches[index - 1].upper if index > 0 else None
+        upper = branch.upper
+        if lower is None:
+            return f"{disc} < {_fmt_bound(upper)}" if upper is not None else disc
+        if upper is None:
+            return f"{disc} >= {_fmt_bound(lower)}"
+        return f"{_fmt_bound(lower)} <= {disc} < {_fmt_bound(upper)}"
+    if decision.kind is XorDecisionKind.BOOLEAN:
+        return f"{disc} == true" if branch.bool_value else f"{disc} == false"
+    # ENUM
+    if branch.is_else:
+        return f"{disc}: otherwise"
+    return f"{disc} in [{', '.join(branch.values)}]"
+
+
 class ControlEdge(BaseModel):
     """A directed control edge between two nodes."""
 
     source: str
     target: str
     type: EdgeType = EdgeType.CONTROL
-    #: Branch predicate, only meaningful on edges leaving an XOR_SPLIT.
+    #: Derived, human-readable branch predicate for edges leaving an XOR_SPLIT.
+    #: The structured ``XorDecision`` on the schema is the source of truth; this
+    #: caption is regenerated from it and is for display / BPMN export only.
     condition: str | None = None
 
 
@@ -566,6 +703,10 @@ class ProcessSchema(BaseModel):
     lifecycle_state: LifecycleState = LifecycleState.ENTWURF
     nodes: dict[str, Node] = Field(default_factory=dict)
     edges: list[ControlEdge] = Field(default_factory=list)
+    #: Structured branch partition per XOR_SPLIT node id (K7). Every XOR_SPLIT
+    #: carries exactly one decision; the partition is total and disjoint so the
+    #: runtime always enables exactly one branch from the instance data.
+    xor_decisions: dict[str, XorDecision] = Field(default_factory=dict)
     data_elements: dict[str, DataElement] = Field(default_factory=dict)
     data_accesses: list[DataAccess] = Field(default_factory=list)
     connectors: dict[str, ConnectorDescriptor] = Field(default_factory=dict)

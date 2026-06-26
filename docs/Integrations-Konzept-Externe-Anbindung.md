@@ -194,12 +194,11 @@ bestehende Modi zu ändern):
 | `GET` | `/v1/instances/{id}` | Instanzzustand abrufen | `data:read` |
 | `GET` | `/v1/instances/{id}/tasks` | offene Aufgaben der Instanz | `data:read` |
 | `POST` | `/v1/instances/{id}/nodes/{nodeId}/complete` | Aufgabe abschließen (**`data` Übergabe**) | `tasks:complete` |
-| `POST` | `/v1/instances/{id}/nodes/{nodeId}/decide` | XOR-Entscheidung (`branch`/`condition`) | `tasks:complete` |
 | `GET` | `/v1/instances/{id}/data` | **alle Instanzdatenwerte lesen** | `data:read` |
 | `PUT` | `/v1/instances/{id}/data` | **Datenwerte setzen** (typ-/zugriffsgeprüft) | `data:write` |
 
 > Diese Endpunkte spiegeln die bestehenden (`POST /schemas/{id}/instances`,
-> `.../complete`, `.../decide`) unter einem **versionierten** `/v1`-Präfix mit
+> `.../complete`) unter einem **versionierten** `/v1`-Präfix mit
 > Integrations-Scopes. `complete` nimmt `data_values` bereits heute entgegen; das
 > Konzept ergänzt nur die explizite Datenlese-/-schreib-Schnittstelle und Idempotenz.
 

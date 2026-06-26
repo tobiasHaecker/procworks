@@ -124,7 +124,7 @@ Bei der **Modellerstellung** werden die Richtlinien aus BPMN 2.0 **und** die str
 - **MR1 – Blockstruktur:** Jeder Split wird mit einem korrespondierenden Join desselben Typs geschlossen (XOR/AND/LOOP), sauber geschachtelt – keine sich überkreuzenden Verzweigungen (entspricht K1).
 - **MR2 – Genau ein Start/Ende:** Jeder Prozess hat genau einen START- und einen END-Knoten; keine isolierten Knoten, keine Sackgassen (K2/K3).
 - **MR3 – Strukturierte Schleifen:** Wiederholungen ausschließlich über das explizite LOOP-Konstrukt (REPEAT-UNTIL) mit definierter Abbruchbedingung – keine „Rück-Kanten" von Hand (K6).
-- **MR4 – Vollständige, überlappungsfreie XOR-Prädikate:** Bedingungen an XOR-Splits decken den Wertebereich vollständig ab und schließen sich gegenseitig aus (K7).
+- **MR4 – Vollständige, überlappungsfreie XOR-Prädikate:** XOR-Splits werden über eine strukturierte, typabhängige Partition (THRESHOLD/BOOLEAN/ENUM) eines Diskriminator-Datenelements modelliert; sie decken den Wertebereich konstruktiv vollständig ab und schließen sich gegenseitig aus (K7). Inkonsistente, lückenhafte oder OR-artige Verzweigungen sind nicht modellierbar.
 - **MR5 – Synchronisation nur zwischen Parallelzweigen:** SYNC-Kanten verbinden nur Aktivitäten verschiedener AND-Zweige (K4).
 
 **B. Datenfluss (verbindlich, aus ADEPT):**
@@ -177,7 +177,11 @@ Die folgenden Regeln entsprechen den in ADEPT systemseitig erzwungenen Strukturr
   - *Proper completion:* unter jeder erreichbaren Endmarkierung sind alle Aktivitäten `COMPLETED` oder `SKIPPED`.
   - *Korrekte Vergangenheit:* für jeden `COMPLETED`/`SKIPPED`-Knoten sind alle Vorgänger ebenfalls `COMPLETED`/`SKIPPED`.
 - **K6 – Schleifenkorrektheit:** Schleifen sind strukturiert (REPEAT-UNTIL mit explizitem LOOP-Start/End; Abbruchbedingung über eine dem LOOP-End zugeordnete XOR-Aktivität).
-- **K7 – Verzweigungsprädikate:** XOR-Prädikate werden so konstruiert, dass sie den Wertebereich **vollständig überdecken** und **überlappungsfrei** sind (ggf. mehrdimensional).
+- **K7 – Verzweigungsprädikate (konstruktiv erzwungen):** Ein XOR-Split trägt keine frei formulierbaren Prädikate, sondern eine **strukturierte Partition** über genau einem typisierten **Diskriminator-Datenelement**. Je nach Typ ist die Partition eine von drei *entscheidbaren* Formen, die per Konstruktion **vollständig** (jeder Wert trifft genau einen Zweig) und **überlappungsfrei** (kein Wert trifft mehrere Zweige) sind:
+  - **THRESHOLD** (INTEGER/FLOAT): aufsteigend strikt geordnete Obergrenzen; der letzte Zweig ist nach oben offen (`… < o₁`, `o₁ ≤ … < o₂`, …, `… ≥ oₙ`).
+  - **BOOLEAN:** genau zwei Zweige für `true` und `false`.
+  - **ENUM** (STRING): disjunkte, nicht-leere Wertelisten plus **genau ein** Auffang-Zweig (*otherwise*).
+  Der Validator weist jede andere Form zurück (Lücke, Überlappung, OR-/Mehrfachaktivierung sind nicht modellierbar). Der Diskriminator muss auf **allen** Pfaden vor dem Split geschrieben sein (must-write-before, vgl. D1) – damit kann der Wert beim Erreichen des Splits nie fehlen, und die Engine wählt den Zweig **deterministisch und automatisch** aus den Instanzdaten (kein manueller Entscheidungsschritt, kein Deadlock, kein Livelock). Weil K7 Teil der Invariante I ist und jede Operation (auch `new_revision`, Instanzmigration und Ad-hoc-Änderung) validate-before-commit durchläuft, bleibt die Eigenschaft über die **gesamte Evolution** eines Modells erhalten.
 
 > Durch K1–K4 (Blockstruktur) sind K5–K6 weitgehend **konstruktiv** erfüllt – das ist der Kern des ADEPT-Vorteils gegenüber freien BPMN-Graphen.
 
@@ -790,7 +794,7 @@ operation op(model M, params P):
 |-----------|------------------------------|------------------------------|
 | `serialInsert(act, posEdge)` | `act` aus Activity Repository; `posEdge` ist ein bestehender Kontrollkonnektor in `M` | neue Aktivität liegt sequenziell auf `posEdge`; genau 1 ein-/ausgehender Konnektor (K2); Erreichbarkeit (K3) erhalten |
 | `parallelInsert(act, blockRef)` | Zielbereich ist ein wohlgeformter Block | `act` liegt in neuem/bestehendem AND-Zweig; AND-Split/Join eineindeutig (K1) |
-| `conditionalInsert(act, predicate, blockRef)` | `predicate` über existierenden Datenelementen; Wertebereich abdeckend & überlappungsfrei (K7) | `act` liegt im XOR-Zweig mit gültigem Prädikat; XOR-Split/Join eineindeutig (K1) |
+| `conditionalInsert(act, discriminator, branches)` | `discriminator` ist ein partitionierbares Instanz-Datenelement (INTEGER/FLOAT/BOOLEAN/STRING), das auf allen Pfaden vor dem Split geschrieben wird; `branches` bilden eine vollständige & überlappungsfreie Partition (THRESHOLD/BOOLEAN/ENUM, K7) | balancierter XOR-Block mit gespeicherter `XorDecision`; abgeleitete Kantenbeschriftungen; XOR-Split/Join eineindeutig (K1); Engine entscheidet den Zweig automatisch aus den Daten |
 | `insertSurroundingBlock(type?{AND,XOR,LOOP}, nodeSet)` | `nodeSet` ist ein **konvexer**, blockbildender Bereich (eine SESE-Region) | Bereich ist sauber von Split/Join (bzw. LOOP-Start/End) umschlossen; Schachtelung intakt |
 | `insertLoop(nodeSet, exitCondition)` | `nodeSet` SESE-Region; `exitCondition` als XOR-Aktivität am LOOP-End spezifizierbar | REPEAT-UNTIL-Struktur mit eindeutigem LOOP-Start/End (K6) |
 | `insertBetweenNodeSets(act, srcSet, dstSet)` | `srcSet`/`dstSet` liegen in verschiedenen Zweigen; erzeugt keinen Zyklus außerhalb LOOP | `act` korrekt eingebettet; Sync-Kanten nur zwischen AND-Zweigen (K4) |
@@ -809,7 +813,7 @@ operation op(model M, params P):
 | `removeDataElement(de)` | `de` hat **keine** verbleibenden Lese-/Schreibkanten | Datenelement entfernt; keine verwaiste Referenz |
 | `connectData(node, de, access?{READ,WRITE,RW}, mandatory)` | bei `READ`/`mandatory`: `de` wird auf **allen** Pfaden zu `node` zuvor (nicht-optional) geschrieben (D1); Typkonformität (D3); `node` ist kein XOR/AND-Join (D4) | Datenkante existiert; D1–D5 erfüllt |
 | `disconnectData(node, de)` | nach Entfernen bleibt D1 für alle übrigen Leser erfüllt | Datenkante entfernt; Datenfluss konsistent |
-| `setPredicate(xorNode, predicate)` | Prädikate aller Zweige decken Wertebereich vollständig & überlappungsfrei ab (K7) | XOR-Verzweigung deterministisch entscheidbar |
+| `setPredicate(xorNode, discriminator, branches)` | `discriminator` ist partitionierbar und vor dem Split geschrieben; `branches` bilden eine vollständige & überlappungsfreie Partition (THRESHOLD/BOOLEAN/ENUM, K7) | XOR-Verzweigung deterministisch & automatisch aus den Instanzdaten entscheidbar |
 
 ### 7.4 Ressourcen-/Bindungs-Operationen
 

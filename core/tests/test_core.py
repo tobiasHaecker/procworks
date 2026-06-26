@@ -12,7 +12,10 @@ from __future__ import annotations
 import pytest
 
 from procworks import (
+    BranchSpec,
+    add_data_element,
     conditional_insert,
+    connect_data,
     create_empty_schema,
     delete_node,
     parallel_insert,
@@ -21,8 +24,36 @@ from procworks import (
     serial_insert,
     validate,
 )
-from procworks.model import ControlEdge, LifecycleState, Node, NodeType, ProcessSchema
+from procworks.model import (
+    AccessMode,
+    ControlEdge,
+    DataType,
+    LifecycleState,
+    Node,
+    NodeType,
+    ProcessSchema,
+)
 from procworks.operations import CorrectnessError
+
+
+def _xor_after_start(schema, low_label, high_label, *, upper, disc="x"):
+    """Insert a discriminator-writing step plus an XOR split partitioned on it.
+
+    The discriminator (INTEGER ``disc``) is written by "Erfassen" before the
+    split, so the resulting schema satisfies K7. ``low_label`` runs for
+    ``disc < upper``, ``high_label`` for ``disc >= upper``.
+    """
+
+    schema = serial_insert(schema, "Erfassen", after_node_id="start")
+    erfassen = next(n.id for n in schema.nodes.values() if n.label == "Erfassen")
+    schema = add_data_element(schema, disc, DataType.INTEGER, element_id=disc)
+    schema = connect_data(schema, erfassen, disc, AccessMode.WRITE)
+    return conditional_insert(
+        schema,
+        after_node_id=erfassen,
+        discriminator=disc,
+        branches=[BranchSpec(label=low_label, upper=upper), BranchSpec(label=high_label)],
+    )
 
 
 def test_empty_schema_is_correct() -> None:
@@ -51,14 +82,12 @@ def test_parallel_insert_builds_balanced_and_block() -> None:
 
 def test_conditional_insert_builds_balanced_xor_block() -> None:
     schema = create_empty_schema("Bedingt")
-    schema = conditional_insert(
-        schema,
-        [("betrag > 1000", "Freigabe Leitung"), ("betrag <= 1000", "Freigabe Team")],
-        after_node_id="start",
+    schema = _xor_after_start(
+        schema, "Freigabe Team", "Freigabe Leitung", upper=1001, disc="betrag"
     )
     assert validate(schema) == []
     xor_edges = [e for e in schema.edges if e.condition is not None]
-    assert {e.condition for e in xor_edges} == {"betrag > 1000", "betrag <= 1000"}
+    assert {e.condition for e in xor_edges} == {"betrag < 1001", "betrag >= 1001"}
 
 
 def test_nested_block_inside_branch() -> None:
@@ -183,15 +212,15 @@ def test_delete_split_removes_whole_block() -> None:
 
 def test_delete_split_removes_nested_block() -> None:
     schema = create_empty_schema("Verschachtelt")
-    schema = conditional_insert(
-        schema, [("x > 1", "P"), ("x <= 1", "Q")], after_node_id="start"
-    )
+    schema = _xor_after_start(schema, "P", "Q", upper=2)
     xsplit = next(n for n in schema.nodes.values() if n.type is NodeType.XOR_SPLIT)
     pbranch = next(n for n in schema.nodes.values() if n.label == "P")
     schema = parallel_insert(schema, ["P1", "P2"], after_node_id=pbranch.id)
     assert validate(schema) == []
     schema = delete_node(schema, xsplit.id)
-    assert set(n.type for n in schema.nodes.values()) == {NodeType.START, NodeType.END}
+    # The whole XOR block is gone as a unit; only the upstream writer remains.
+    gateways = {NodeType.XOR_SPLIT, NodeType.XOR_JOIN, NodeType.AND_SPLIT, NodeType.AND_JOIN}
+    assert not (gateways & {n.type for n in schema.nodes.values()})
     assert validate(schema) == []
 
 
@@ -256,16 +285,14 @@ def test_delete_branch_dissolves_and_gateway_keeping_other_branch() -> None:
 
 def test_delete_branch_dissolves_xor_gateway_keeping_other_branch() -> None:
     schema = create_empty_schema("XorZweig")
-    schema = conditional_insert(
-        schema, [("x > 1", "Ja"), ("x <= 1", "Nein")], after_node_id="start"
-    )
+    schema = _xor_after_start(schema, "Ja", "Nein", upper=2)
     yes = next(n for n in schema.nodes.values() if n.label == "Ja")
     schema = delete_node(schema, yes.id)
     types = {n.type for n in schema.nodes.values()}
     assert NodeType.XOR_SPLIT not in types
     assert NodeType.XOR_JOIN not in types
     labels = {n.label for n in schema.nodes.values() if n.type is NodeType.ACTIVITY}
-    assert labels == {"Nein"}
+    assert labels == {"Erfassen", "Nein"}
     # The surviving branch is now an unconditional serial step.
     nein = next(n for n in schema.nodes.values() if n.label == "Nein")
     assert schema.incoming(nein.id)[0].condition is None

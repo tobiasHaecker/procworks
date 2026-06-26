@@ -101,5 +101,6 @@ Damit ein Mitarbeiter überhaupt Aufgaben sieht, müssen diese Punkte erfüllt s
   **Entwürfe als Test-Instanz** starten (diese Testläufe zählen nicht ins
   Monitoring). Für reine Aufgabenbearbeitung genügt die Rolle **Bearbeiter**.
 - Reine Sachbearbeiter-Aufgaben werden vollständig über **„Meine Aufgaben"**
-  erledigt. **Verzweigungsentscheidungen** (XOR, „Zweig wählen") laufen in der
-  Sicht **Ausführung**.
+  erledigt. **XOR-Verzweigungen entscheidet das System automatisch** anhand der
+  erfassten Daten (vollständige, überschneidungsfreie Partition, K7) – es gibt
+  keinen manuellen „Zweig wählen"-Schritt mehr.

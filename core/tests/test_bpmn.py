@@ -13,9 +13,14 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from procworks import (
+    AccessMode,
     BpmnError,
+    BranchSpec,
+    DataType,
     NodeType,
+    add_data_element,
     conditional_insert,
+    connect_data,
     create_empty_schema,
     export_bpmn,
     import_bpmn,
@@ -43,10 +48,18 @@ def _parallel() -> object:
 
 def _conditional() -> object:
     schema = create_empty_schema("Bedingt", schema_id="xor")
+    schema = serial_insert(schema, "Erfassen", after_node_id="start")
+    erfassen = next(n.id for n in schema.nodes.values() if n.label == "Erfassen")
+    schema = add_data_element(schema, "betrag", DataType.INTEGER, element_id="betrag")
+    schema = connect_data(schema, erfassen, "betrag", AccessMode.WRITE)
     return conditional_insert(
         schema,
-        [("betrag > 1000", "Freigabe Leitung"), ("betrag <= 1000", "Freigabe Team")],
-        after_node_id="start",
+        after_node_id=erfassen,
+        discriminator="betrag",
+        branches=[
+            BranchSpec(label="Freigabe Team", upper=1001),
+            BranchSpec(label="Freigabe Leitung"),
+        ],
     )
 
 
@@ -80,7 +93,7 @@ def test_export_writes_xor_conditions() -> None:
         for flow in process.findall(_q("sequenceFlow"))
         if flow.find(_q("conditionExpression")) is not None
     }
-    assert conditions == {"betrag > 1000", "betrag <= 1000"}
+    assert conditions == {"betrag < 1001", "betrag >= 1001"}
 
 
 # --- round-trip ----------------------------------------------------------
@@ -106,9 +119,11 @@ def test_round_trip_preserves_xor_conditions() -> None:
     original = _conditional()
     restored = import_bpmn(export_bpmn(original))
     assert {e.condition for e in restored.edges if e.condition} == {
-        "betrag > 1000",
-        "betrag <= 1000",
+        "betrag < 1001",
+        "betrag >= 1001",
     }
+    # the structured decision survives the round-trip (K7 holds on import)
+    assert len(restored.xor_decisions) == 1
 
 
 def test_round_trip_infers_split_and_join_from_degree() -> None:

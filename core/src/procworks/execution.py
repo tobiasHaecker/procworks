@@ -10,9 +10,10 @@ ADEPT-style node/edge marking semantics:
 
 Gateways and the start node complete automatically once activated; ACTIVITY
 nodes wait for interactive work (start_activity / complete_activity). An
-XOR_SPLIT waits for an explicit branch decision (decide_branch). The marking
-propagation is the runtime counterpart of the structural correctness rules, so
-under any reachable end marking every node is COMPLETED or SKIPPED.
+XOR_SPLIT resolves its outgoing branch automatically from the instance data via
+its structured, K7-valid decision (no manual choice). The marking propagation
+is the runtime counterpart of the structural correctness rules, so under any
+reachable end marking every node is COMPLETED or SKIPPED.
 
 A SUBPROCESS node is handled by composition: with an ExecutionContext it spawns
 a child instance of its pinned target schema (passing the bound input data),
@@ -46,6 +47,7 @@ from procworks.model import (
     ProcessInstance,
     ProcessSchema,
     SubProcessBinding,
+    resolve_xor_target,
 )
 from procworks.store import InstanceStore
 from procworks.validator import SchemaResolver
@@ -67,8 +69,9 @@ class ExecutionContext:
     instances: InstanceStore
 
 #: Non-activity node types that complete automatically once activated. An
-#: XOR_SPLIT is excluded because it first needs a branch decision; END is
-#: excluded because it terminates the instance.
+#: XOR_SPLIT is handled separately in ``_advance`` (it auto-resolves its branch
+#: from the instance data, K7); END is excluded because it terminates the
+#: instance.
 _AUTO_COMPLETE = frozenset(
     {
         NodeType.START,
@@ -163,13 +166,14 @@ def worklist(instance: ProcessInstance, schema: ProcessSchema) -> list[str]:
 
 
 def pending_decisions(instance: ProcessInstance, schema: ProcessSchema) -> list[str]:
-    """Return the ids of XOR splits awaiting a branch decision."""
+    """XOR splits awaiting a manual branch decision -- always empty now.
 
-    return [
-        nid
-        for nid, st in instance.node_states.items()
-        if st is NodeState.ACTIVATED and schema.nodes[nid].type is NodeType.XOR_SPLIT
-    ]
+    Branch selection is fully data-driven (K7): the engine resolves every
+    XOR split from its structured decision the moment it is activated, so no
+    split is ever left waiting. Kept as a stable, compatibility shim.
+    """
+
+    return []
 
 
 def start_activity(
@@ -231,37 +235,6 @@ def complete_activity(
     return result
 
 
-def decide_branch(
-    instance: ProcessInstance,
-    schema: ProcessSchema,
-    node_id: str,
-    target_node_id: str,
-    *,
-    context: ExecutionContext | None = None,
-) -> ProcessInstance:
-    """Choose the outgoing branch of an activated XOR_SPLIT and advance."""
-
-    _require_running(instance)
-    node = schema.nodes.get(node_id)
-    if node is None or node.type is not NodeType.XOR_SPLIT:
-        raise ExecutionError(f"node '{node_id}' is not an XOR_SPLIT")
-    if instance.node_states[node.id] is not NodeState.ACTIVATED:
-        raise ExecutionError(
-            f"XOR split '{node_id}' is not activated "
-            f"(state {instance.node_states[node.id].value})"
-        )
-    targets = {e.target for e in schema.outgoing(node_id)}
-    if target_node_id not in targets:
-        raise ExecutionError(
-            f"'{target_node_id}' is not a branch target of XOR split '{node_id}'"
-        )
-    result = instance.model_copy(deep=True)
-    result.decisions[node_id] = target_node_id
-    _advance(result, schema, context)
-    _finish(result, schema, context)
-    return result
-
-
 # --- marking propagation -------------------------------------------------
 
 
@@ -291,9 +264,8 @@ def _advance(
                 progress = True
                 continue
             if node.type is NodeType.XOR_SPLIT:
-                target = instance.decisions.get(node.id)
-                if target is None:
-                    continue  # waits for a branch decision
+                target = _resolve_xor_branch(instance, schema, node)
+                instance.decisions[node.id] = target
                 _complete_node(instance, schema, node, chosen_target=target)
                 progress = True
                 continue
@@ -301,6 +273,36 @@ def _advance(
             progress = True
         if _evaluate_targets(instance, schema):
             progress = True
+
+
+def _resolve_xor_branch(
+    instance: ProcessInstance, schema: ProcessSchema, node: Node
+) -> str:
+    """Pick the single enabled branch of an XOR split from the instance data.
+
+    The structured, K7-valid :class:`XorDecision` partitions the discriminator's
+    domain totally and disjointly, so exactly one branch matches -- the engine
+    never asks a human and can never enable two paths. A missing or ill-typed
+    discriminator value is a runtime error (the modelling rules guarantee the
+    value is written before the split is reached).
+    """
+
+    decision = schema.xor_decisions.get(node.id)
+    if decision is None:  # pragma: no cover - guarded by K7 at release time
+        raise ExecutionError(f"XOR split '{node.id}' has no branch decision")
+    if decision.discriminator not in instance.data_values:
+        raise ExecutionError(
+            f"XOR split '{node.id}' needs data element "
+            f"'{decision.discriminator}' but it is not set"
+        )
+    value = instance.data_values[decision.discriminator]
+    target = resolve_xor_target(decision, value)
+    if target is None:
+        raise ExecutionError(
+            f"XOR split '{node.id}' could not resolve a branch for "
+            f"'{decision.discriminator}'={value!r}"
+        )
+    return target
 
 
 # --- sub-process composition --------------------------------------------

@@ -13,8 +13,13 @@ from pathlib import Path
 import pytest
 
 from procworks import (
+    AccessMode,
+    BranchSpec,
+    DataType,
+    add_data_element,
     complete_activity,
     conditional_insert,
+    connect_data,
     create_empty_schema,
     instantiate,
     release,
@@ -46,10 +51,17 @@ def store(tmp_path: Path) -> SqlAlchemySchemaStore:
 def test_put_get_roundtrip_preserves_structure(store: SqlAlchemySchemaStore) -> None:
     schema = create_empty_schema("Persistenz", schema_id="s1")
     schema = serial_insert(schema, "Antrag pruefen", after_node_id="start")
+    pruefen = next(n.id for n in schema.nodes.values() if n.label == "Antrag pruefen")
+    schema = add_data_element(schema, "betrag", DataType.INTEGER, element_id="betrag")
+    schema = connect_data(schema, pruefen, "betrag", AccessMode.WRITE)
     schema = conditional_insert(
         schema,
-        [("betrag > 1000", "Freigabe Leitung"), ("betrag <= 1000", "Freigabe Team")],
-        after_node_id="start",
+        after_node_id=pruefen,
+        discriminator="betrag",
+        branches=[
+            BranchSpec(label="Freigabe Leitung", upper=1001),
+            BranchSpec(label="Freigabe Team"),
+        ],
     )
     store.put(schema)
 
@@ -60,7 +72,7 @@ def test_put_get_roundtrip_preserves_structure(store: SqlAlchemySchemaStore) -> 
     assert set(loaded.nodes) == set(schema.nodes)
     assert len(loaded.edges) == len(schema.edges)
     conditions = {e.condition for e in loaded.edges if e.condition is not None}
-    assert conditions == {"betrag > 1000", "betrag <= 1000"}
+    assert conditions == {"betrag >= 1001", "betrag < 1001"}
 
 
 def test_put_is_upsert_and_tracks_lifecycle(store: SqlAlchemySchemaStore) -> None:

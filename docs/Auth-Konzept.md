@@ -48,8 +48,8 @@ Zwei konkrete Schwachstellen sollen geschlossen werden:
 
 1. **Fehlende Authentifizierung** – die API hat keine Identitätsprüfung
    (`CORS allow_origins=["*"]`, keine Tokens, kein Login).
-2. **Impersonation über den Request-Body** – die Endpunkte
-   `POST /instances/{id}/complete` und `POST /instances/{id}/decide` übernehmen
+2. **Impersonation über den Request-Body** – der Endpunkt
+   `POST /instances/{id}/complete` übernimmt
    die handelnde Identität aus dem Request (`req.agent_id`). Ein Client kann sich
    damit als beliebiger Bearbeiter ausgeben. Das untergräbt die
    BZR-Berechtigungsprüfung (`assignment.py`, `eligible_agents`) und die
@@ -104,14 +104,14 @@ Die geprüfte, serverseitig ermittelte Identität eines Requests.
 
 ```python
 class Principal(BaseModel):
-    agent_id: str | None      # verknüpfter Bearbeiter (für /complete, /decide)
+    agent_id: str | None      # verknüpfter Bearbeiter (für /complete)
     subject: str              # stabile Identität des Aufrufers (z. B. Token-sub)
     roles: frozenset[str]     # grobe RBAC-Rollen (siehe 3.4)
     display_name: str | None = None
 ```
 
 - `agent_id` bindet den Aufrufer an einen ProcWorks-Bearbeiter. Nur diese ID
-  wird an `exe.complete_activity(...)` / `exe.decide_branch(...)` übergeben.
+  wird an `exe.complete_activity(...)` übergeben.
 - `roles` steuert die **grobe** Zugriffskontrolle am Boundary (orthogonal zur
   feingranularen BZR-Prüfung im Kern).
 
@@ -136,7 +136,7 @@ Vorgesehene Implementierungen:
 | `JwtAuthBackend`   | Später: JWT/OIDC-Validierung            | Issuer/JWKS-URL/Audience               |
 
 > Das `OpenAuthBackend` liefert einen Principal mit allen Rollen und ohne
-> festes `agent_id`. Für `/complete` und `/decide` muss der Aufrufer im
+> festes `agent_id`. Für `/complete` muss der Aufrufer im
 > Dev-Modus weiterhin einen `agent_id` benennen (siehe 5) – die Kern-BZR-Prüfung
 > bleibt aktiv und schützt die Korrektheit auch ohne Auth.
 
@@ -257,8 +257,8 @@ Regel in `_resolve_acting_agent(principal, requested)`:
   Die Korrektheit bleibt durch die **BZR-Eignungsprüfung im Kern** geschützt
   (unzulässiger Bearbeiter → `409`).
 
-Betroffene Endpunkte: `POST /instances/{id}/complete`,
-`POST /instances/{id}/decide` (sowie `start`, falls dort eine Startidentität
+Betroffene Endpunkte: `POST /instances/{id}/complete`
+(sowie `start`, falls dort eine Startidentität
 relevant wird).
 
 ## 6. Konfiguration
@@ -307,7 +307,7 @@ Neues Modul `core/tests/test_auth.py`:
 2. ✅ `core/src/procworks/auth_token.py`: `TokenAuthBackend.from_env()`
    (Token nur als SHA-256-Digest gespeichert).
 3. ✅ `api.py`: Rollen-Gates an allen Endpunkten; `_resolve_acting_agent`
-   eingeführt; `agent_id` in `/complete` und `/decide` aus dem `Principal`
+   eingeführt; `agent_id` in `/complete` aus dem `Principal`
    gezogen; zusätzlich `GET /auth/me` und `GET /me/tasks`.
 4. ✅ CORS konfigurierbar (`PROCWORKS_CORS_ORIGINS`).
 5. ✅ `core/tests/test_auth.py` (17 Tests); `ruff`/`mypy`/`pytest` grün.

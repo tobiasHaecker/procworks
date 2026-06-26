@@ -59,8 +59,10 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   aus — Knotenmarkierung NS (`NOT_ACTIVATED`?`ACTIVATED`?`RUNNING`?`COMPLETED`
   bzw. `SKIPPED`), Kantenmarkierung ES (`TRUE_SIGNALED`/`FALSE_SIGNALED`).
   Gateways/Start laufen automatisch, Aktivitäten warten auf `start_activity`/
-  `complete_activity`, XOR-Splits auf `decide_branch`; `worklist` liefert die
-  bereiten Schritte. Unter jeder erreichbaren Endmarkierung ist jeder Knoten
+  `complete_activity`, **XOR-Splits entscheiden automatisch** anhand der
+  strukturierten Partition (K7) über ihren Diskriminator-Wert; `worklist`
+  liefert die bereiten Schritte. Unter jeder erreichbaren Endmarkierung ist
+  jeder Knoten
   `COMPLETED` oder `SKIPPED`. Ein `SUBPROCESS`-Knoten erzeugt mit einem
   `ExecutionContext` (Resolver + Instanz-Store) eine **Kind-Instanz** seines
   gepinnten Zielschemas, übergibt die gemappten Eingabedaten, bleibt `RUNNING`
@@ -137,7 +139,7 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   zusätzlich zu den Personen-Rollen; mutierende Aufrufe akzeptieren einen
   `Idempotency-Key`-Header (Erfolg wird gecacht). Vier Bausteine:
   - **Inbound**: `POST /v1/schemas/{id}/instances` (nur freigegeben),
-    `…/nodes/{nodeId}/complete` und `…/decide`, `GET`/`PUT /v1/instances/{id}/data`
+    `…/nodes/{nodeId}/complete`, `GET`/`PUT /v1/instances/{id}/data`
     (typgeprüft), `GET /v1/instances/{id}` / `…/tasks`.
   - **External-Task-Pull** (`integration_runtime.py`): aktivierte automatische
     `EXTERNAL_TASK`-Aktivitäten werden zu Aufgaben; ein Worker holt sie per
@@ -450,13 +452,14 @@ Ein freigegebenes Schema wird instanziiert und \u00fcber die Worklist abgearbeit
 
 ```text
 POST /schemas/{id}/instances        -> ProcessInstance (state RUNNING, Markierungen gesetzt)
-GET  /instances/{iid}/worklist      -> { "ready_activities": [...], "pending_decisions": [...] }
+GET  /instances/{iid}/worklist      -> { "ready_activities": [...] }
 POST /instances/{iid}/complete      { "node_id": "<act>", "data": { "betrag": 1500 } }
-POST /instances/{iid}/decide        { "node_id": "<xor_split>", "target_node_id": "<branch>" }
 ```
 
-Parallele AND-Zweige werden gleichzeitig bereit; ein XOR-Split pausiert die
-Instanz, bis ein Zweig gew\u00e4hlt ist (der andere wird `SKIPPED`). Eine
+Parallele AND-Zweige werden gleichzeitig bereit; ein XOR-Split **entscheidet
+automatisch** anhand der strukturierten Partition (K7) über seinen
+Diskriminator-Wert aus den Instanzdaten – der nicht gewählte Zweig wird
+`SKIPPED`, ein manueller Entscheidungsschritt entfällt. Eine
 Laufzeitoperation im falschen Zustand (z. B. Instanziieren eines Entwurfs)
 wird mit **HTTP 409** abgelehnt.
 

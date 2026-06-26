@@ -431,11 +431,17 @@ class ParallelInsertRequest(BaseModel):
 
 
 class Branch(BaseModel):
-    condition: str = Field(..., examples=["betrag > 1000"])
+    """One cell of an XOR partition (K7); fields apply per discriminator kind."""
+
     label: str = Field(..., examples=["Freigabe Leitung"])
+    upper: float | None = Field(default=None, examples=[1000])
+    bool_value: bool | None = Field(default=None, examples=[True])
+    values: list[str] = Field(default_factory=list, examples=[["A", "B"]])
+    is_else: bool = Field(default=False)
 
 
 class ConditionalInsertRequest(BaseModel):
+    discriminator: str = Field(..., examples=["betrag"])
     branches: list[Branch]
     after_node_id: str = Field(..., examples=["start"])
 
@@ -616,11 +622,6 @@ class CompleteActivityRequest(BaseModel):
     node_id: str = Field(..., examples=["act_1"])
     data: dict[str, object] = Field(default_factory=dict)
     agent_id: str | None = Field(default=None, examples=["a1"])
-
-
-class DecideBranchRequest(BaseModel):
-    node_id: str = Field(..., examples=["xor_split_1"])
-    target_node_id: str = Field(..., examples=["act_2"])
 
 
 class AdhocInsertRequest(BaseModel):
@@ -805,7 +806,7 @@ def _push_external(binding: ServiceBinding, payload: dict[str, object]) -> None:
 def _drive_pushes() -> None:
     """Best-effort push of newly activated ``HTTP_PUSH`` steps after an advance.
 
-    Called after every engine advance (start/complete/decide). It never raises:
+    Called after every engine advance (start/complete). It never raises:
     a push problem must not fail the triggering request nor corrupt the instance,
     so failures are swallowed and retried on the next advance.
     """
@@ -1128,8 +1129,21 @@ def post_parallel_insert(schema_id: str, req: ParallelInsertRequest) -> ProcessS
 )
 def post_conditional_insert(schema_id: str, req: ConditionalInsertRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
-    branches = [(b.condition, b.label) for b in req.branches]
-    return _commit_or_422(lambda: ops.conditional_insert(schema, branches, req.after_node_id))
+    branches = [
+        ops.BranchSpec(
+            label=b.label,
+            upper=b.upper,
+            bool_value=b.bool_value,
+            values=tuple(b.values),
+            is_else=b.is_else,
+        )
+        for b in req.branches
+    ]
+    return _commit_or_422(
+        lambda: ops.conditional_insert(
+            schema, req.after_node_id, discriminator=req.discriminator, branches=branches
+        )
+    )
 
 
 @app.patch(
@@ -1825,33 +1839,6 @@ def post_complete_activity(
     return after
 
 
-@app.post("/instances/{instance_id}/decide", response_model=ProcessInstance)
-def post_decide_branch(
-    instance_id: str,
-    req: DecideBranchRequest,
-    principal: Principal = Depends(require_role("operator", "modeler", "admin")),
-) -> ProcessInstance:
-    before = _get_instance_or_404(instance_id)
-    schema = _effective_schema_for(before)
-    after = _run_or_409(
-        lambda: exe.decide_branch(
-            before, schema, req.node_id, req.target_node_id, context=_context
-        )
-    )
-    _audit.append(
-        EventType.BRANCH_DECIDED,
-        after.id,
-        after.schema_id,
-        schema_version=after.schema_version,
-        node_id=req.node_id,
-        label=_label_of(schema, req.node_id),
-        detail={"target_node_id": req.target_node_id},
-    )
-    _record_completion(before, after)
-    _drive_pushes()
-    return after
-
-
 # --- ad-hoc changes (per-instance variant; R1/R2) ------------------------
 
 
@@ -2036,10 +2023,6 @@ class V1CompleteRequest(BaseModel):
     agent_id: str | None = Field(default=None, examples=["a1"])
 
 
-class V1DecideRequest(BaseModel):
-    target_node_id: str = Field(..., examples=["act_2"])
-
-
 def _validate_data_values(
     schema: ProcessSchema, values: dict[str, object]
 ) -> list[ValidationFinding]:
@@ -2164,32 +2147,6 @@ def v1_complete_task(
             node_id=node_id, data=body.data, agent_id=body.agent_id
         )
         return post_complete_activity(instance_id, completion, principal)
-
-    result = _idempotent(principal, idempotency_key, produce)
-    assert isinstance(result, ProcessInstance)
-    return result
-
-
-@_v1.post(
-    "/instances/{instance_id}/nodes/{node_id}/decide",
-    response_model=ProcessInstance,
-)
-def v1_decide_branch(
-    instance_id: str,
-    node_id: str,
-    req: V1DecideRequest,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    principal: Principal = Depends(
-        require_scope(SCOPE_TASKS_COMPLETE, "operator", "modeler", "admin")
-    ),
-) -> ProcessInstance:
-    """Resolve an XOR decision (mirror of ``/decide``)."""
-
-    def produce() -> ProcessInstance:
-        decision = DecideBranchRequest(
-            node_id=node_id, target_node_id=req.target_node_id
-        )
-        return post_decide_branch(instance_id, decision, principal)
 
     result = _idempotent(principal, idempotency_key, produce)
     assert isinstance(result, ProcessInstance)

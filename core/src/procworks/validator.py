@@ -35,6 +35,9 @@ from procworks.model import (
     StaffRule,
     StaffRuleKind,
     SubProcessBinding,
+    XorDecision,
+    XorDecisionKind,
+    discriminator_kind,
 )
 
 #: Resolves a (schema id, version) reference to a schema, or ``None`` if the
@@ -81,6 +84,7 @@ def validate(
     findings: list[ValidationFinding] = []
     findings += _check_k2_endpoints_and_degrees(schema)
     findings += _check_k1_gateways(schema)
+    findings += _check_k7_xor_decisions(schema)
     findings += _check_k3_reachability(schema)
     findings += _check_data_flow(schema)
     findings += _check_connectors(schema)
@@ -169,6 +173,126 @@ def _check_k1_gateways(schema: ProcessSchema) -> list[ValidationFinding]:
                 )
             )
     return findings
+
+
+# --- K7: complete, overlap-free XOR branch partitions ---------------------
+
+
+def _check_k7_xor_decisions(schema: ProcessSchema) -> list[ValidationFinding]:
+    """Every XOR_SPLIT carries a total, disjoint, decidable branch partition.
+
+    This is the constructive guarantee that an exclusive split can never
+    deadlock (the partition is *total*: some branch always matches) nor activate
+    several paths at once (it is *disjoint*: at most one branch matches). The
+    partition is expressed over a typed discriminator element whose value is
+    guaranteed to be set before the split is reached, so the property is decided
+    at modelling time and preserved under every evolution step.
+    """
+
+    findings: list[ValidationFinding] = []
+
+    def fail(message: str, node_id: str | None = None) -> None:
+        findings.append(ValidationFinding(rule="K7", node_id=node_id, message=message))
+
+    splits = {n.id for n in schema.nodes.values() if n.type is NodeType.XOR_SPLIT}
+
+    # Stale decisions for nodes that are not (or no longer) XOR splits.
+    for node_id in schema.xor_decisions:
+        if node_id not in splits:
+            fail("branch decision references a node that is not an XOR split", node_id)
+
+    # A branch predicate may only ever sit on an edge leaving an XOR split.
+    for edge in schema.edges:
+        if edge.condition is not None and edge.source not in splits:
+            fail("only edges leaving an XOR split may carry a branch condition", edge.source)
+
+    written_before = _must_written_before(schema)
+
+    for split_id in splits:
+        decision = schema.xor_decisions.get(split_id)
+        if decision is None:
+            fail("XOR split has no branch decision", split_id)
+            continue
+
+        out_targets = sorted(e.target for e in schema.outgoing(split_id))
+        branch_targets = sorted(b.target for b in decision.branches)
+        if branch_targets != out_targets:
+            fail("branch targets do not match the split's outgoing edges", split_id)
+        if len(decision.branches) < 2:
+            fail("an XOR split needs at least two branches", split_id)
+
+        element = schema.data_elements.get(decision.discriminator)
+        if element is None:
+            fail("discriminator data element does not exist", split_id)
+            continue
+        if element.source is not DataSourceKind.INSTANCE:
+            fail("discriminator must be an instance data element", split_id)
+        expected_kind = discriminator_kind(element.data_type)
+        if expected_kind is None:
+            fail(
+                f"data type {element.data_type.value} cannot be used as an XOR discriminator",
+                split_id,
+            )
+        elif expected_kind is not decision.kind:
+            fail(
+                f"decision kind {decision.kind.value} does not match "
+                f"discriminator type {element.data_type.value}",
+                split_id,
+            )
+        if decision.discriminator not in written_before.get(split_id, set()):
+            fail(
+                "discriminator may be unset when the split is reached "
+                "(no guaranteed prior write)",
+                split_id,
+            )
+
+        _check_partition(split_id, decision, fail)
+
+    return findings
+
+
+def _check_partition(
+    split_id: str,
+    decision: XorDecision,
+    fail: Callable[[str, str | None], None],
+) -> None:
+    """Check that ``decision`` tiles its discriminator's domain (total+disjoint)."""
+
+    if decision.kind is XorDecisionKind.THRESHOLD:
+        last = len(decision.branches) - 1
+        prev: float | None = None
+        for i, branch in enumerate(decision.branches):
+            if i == last:
+                if branch.upper is not None:
+                    fail("the last threshold branch must be unbounded (+inf)", split_id)
+            elif branch.upper is None:
+                fail("only the last threshold branch may be unbounded", split_id)
+            else:
+                if prev is not None and branch.upper <= prev:
+                    fail("threshold bounds must be strictly ascending", split_id)
+                prev = branch.upper
+    elif decision.kind is XorDecisionKind.BOOLEAN:
+        if len(decision.branches) != 2:
+            fail("a boolean split must have exactly two branches", split_id)
+        truths = {b.bool_value for b in decision.branches}
+        if truths != {True, False}:
+            fail("boolean branches must cover both true and false exactly once", split_id)
+    else:  # ENUM
+        else_count = sum(1 for b in decision.branches if b.is_else)
+        if else_count != 1:
+            fail("an enum split must have exactly one catch-all (otherwise) branch", split_id)
+        seen: set[str] = set()
+        for branch in decision.branches:
+            if branch.is_else:
+                if branch.values:
+                    fail("the catch-all branch must not list values", split_id)
+                continue
+            if not branch.values:
+                fail("each enum branch must list at least one value", split_id)
+            for value in branch.values:
+                if value in seen:
+                    fail(f"enum value {value!r} is matched by more than one branch", split_id)
+                seen.add(value)
 
 
 # --- K3: reachability (no isolated nodes, no dead ends) -------------------
