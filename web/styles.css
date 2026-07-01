@@ -332,3 +332,20 @@ svg.graph { display: block; min-width: 100%; user-select: none; transform-origin
   white-space: pre; margin: 0;
 }
 
+/* ---- Prüfinstanz view (4-Quadranten-Cockpit) ---- */
+.quad-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.quad-cell { min-width: 0; max-height: 48vh; overflow: auto; }
+.quad-cell > .panel { margin: 0; }
+@media (max-width: 1100px) {
+  .quad-grid { grid-template-columns: 1fr; }
+  .quad-cell { max-height: none; }
+}
+.kpis.kpis-compact { grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.kpis.kpis-compact .kpi { padding: 8px 10px; }
+.kpis.kpis-compact .kpi .value { font-size: 20px; }
+.id-card { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.id-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; font-size: 13px; }
+.id-row .id-label { color: var(--txt-dim); }
+.id-row .id-value { font-weight: 600; }
+.pill.pill-amber { background: rgba(217, 119, 6, .16); color: #b45309; }
+

@@ -172,16 +172,44 @@ In der Modellieren-Sicht zeigt die rechte Spalte laufend:
 
 ## 7. Testlauf vor der Freigabe
 
-Als Modellierer dürfen Sie einen **Entwurf** als **Test-Instanz** starten, ohne
-ihn freizugeben:
+Als Modellierer dürfen Sie einen **Entwurf** durchspielen, ohne ihn
+freizugeben. Eine solche **Test-Instanz** ist als **TEST** markiert und
+hinterlässt über ihren **gesamten Lebenszyklus** (Start, Schritt-Abschluss,
+Ad-hoc-Änderung, Abschluss) **keine Spur** im Monitoring, in den KPIs, im
+Audit-Log oder in den Integrations-Webhooks – Sie können also gefahrlos so oft
+durchspielen, wie Sie möchten.
 
-1. Sicht **Ausführung** öffnen.
-2. Bei einem nicht freigegebenen Schema erscheint **„▶ Test-Instanz starten"**.
-3. Die Test-Instanz trägt eine **TEST**-Markierung und wird **nicht** ins
-   Monitoring/KPIs gezählt – ideal, um den eigenen Entwurf durchzuspielen.
+### 7a. Prüfinstanz-Cockpit (4-Quadranten-Analyse)
 
-So lässt sich der Ablauf inkl. Datenerfassung und XOR-Entscheidungen prüfen,
-bevor echte Instanzen laufen.
+Der komfortabelste Weg ist die Sicht **Prüfinstanz** (nur für
+Modellierer/Administratoren):
+
+1. In der **Modellieren**-Sicht oben rechts auf **„⚗ Prüfinstanz"** klicken
+   (oder den Navigationseintrag **Prüfinstanz** öffnen und dort starten).
+2. Ein Dialog fragt, **wer die Instanz startet**. Diese Person erscheint
+   anschließend als angemeldeter *Starter*.
+3. Es öffnet sich ein Cockpit aus vier Quadranten:
+
+   | Quadrant | Inhalt |
+   |----------|--------|
+   | **oben links – Monitoring** | Live-Prozesslandkarte, Fortschritt, Instanzdaten und eine Schrittübersicht – **nur für diese eine Instanz** |
+   | **oben rechts – Starter** | die angemeldete Person mit Rollen und Abteilung |
+   | **unten links / rechts – Arbeitslisten A & B** | zwei **frei wählbare** beteiligte Agenten; jede Liste zeigt die offenen Aufgaben **gefiltert auf diese Instanz** |
+
+4. Über **„Erledigen"** in einer der beiden Arbeitslisten spielen Sie die
+   Schritte aus Sicht des jeweiligen Agenten durch; das Monitoring links
+   aktualisiert sich sofort. Mit **„⚗ Neue Prüfinstanz"** starten Sie einen
+   frischen Durchlauf, mit **„Analyse schließen"** verlassen Sie die Instanz.
+
+So lässt sich der Ablauf inkl. Datenerfassung, Bearbeiterzuordnung und
+XOR-Entscheidungen realistisch aus mehreren Rollen durchspielen, bevor echte
+Instanzen laufen.
+
+### 7b. Einfacher Testlauf (Ausführungs-Sicht)
+
+Alternativ startet die Sicht **Ausführung** bei einem nicht freigegebenen
+Schema eine einzelne **„▶ Test-Instanz"** – dieselbe TEST-Markierung, aber ohne
+das Mehr-Rollen-Cockpit.
 
 ---
 

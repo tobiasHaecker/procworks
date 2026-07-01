@@ -336,6 +336,32 @@ def test_monitoring_revision_tracks_progress() -> None:
     kpis = client.get(f"/monitoring/kpis?schema_id={sid}").json()
     assert kpis["total_instances"] == 0
 
+def test_test_instance_stays_out_of_audit_through_completion() -> None:
+    # A throw-away test instance of a draft (started e.g. from the Prüfinstanz
+    # cockpit) must never pollute the monitoring KPIs or the audit log -- not
+    # only at creation but for its *whole* lifecycle, incl. step completion.
+    sid = client.post("/schemas", json={"name": "PruefinstanzLauf"}).json()["id"]
+    client.post(f"/schemas/{sid}/serial-insert", json={"label": "S", "after_node_id": "start"})
+    # Intentionally NOT released -> instantiation yields a flagged test instance.
+
+    rev_before = client.get("/monitoring/revision").json()["revision"]
+    iid = client.post(f"/schemas/{sid}/instances").json()["id"]
+
+    # Drive the test instance to completion.
+    while True:
+        wl = client.get(f"/instances/{iid}/worklist").json()
+        if wl["state"] == "COMPLETED":
+            break
+        node_id = wl["ready_activities"][0]
+        resp = client.post(f"/instances/{iid}/complete", json={"node_id": node_id})
+        assert resp.status_code == 200
+
+    # The instance really progressed to COMPLETED ...
+    assert client.get(f"/instances/{iid}").json()["state"] == "COMPLETED"
+    # ... yet left no trace in the audit log, the KPIs, or the revision counter.
+    assert client.get(f"/instances/{iid}/audit").json() == []
+    assert client.get(f"/monitoring/kpis?schema_id={sid}").json()["total_instances"] == 0
+    assert client.get("/monitoring/revision").json()["revision"] == rev_before
 
 def test_subprocess_via_api() -> None:
     # released target schema

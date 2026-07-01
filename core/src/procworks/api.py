@@ -1679,8 +1679,10 @@ def post_instantiate(
 
     A RELEASED schema may be instantiated for real by operator/modeler/admin.
     A non-released (draft) schema may only be started as a throw-away *test*
-    instance, and only by a modeller/admin -- it is flagged ``is_test`` and no
-    audit events are recorded, so it never pollutes the monitoring KPIs.
+    instance, and only by a modeller/admin -- it is flagged ``is_test``. A test
+    instance records *no* audit events for its whole lifecycle (creation, step
+    start/complete, ad-hoc changes, completion) and triggers no webhooks or
+    external pushes, so it never pollutes the monitoring KPIs or the audit log.
     """
 
     schema = _get_or_404(schema_id)
@@ -1800,14 +1802,17 @@ def post_start_activity(instance_id: str, req: StartActivityRequest) -> ProcessI
     instance = _get_instance_or_404(instance_id)
     schema = _effective_schema_for(instance)
     after = _run_or_409(lambda: exe.start_activity(instance, schema, req.node_id))
-    _audit.append(
-        EventType.ACTIVITY_STARTED,
-        after.id,
-        after.schema_id,
-        schema_version=after.schema_version,
-        node_id=req.node_id,
-        label=_label_of(schema, req.node_id),
-    )
+    if not instance.is_test:
+        # A throw-away test instance of a draft records no audit events, so it
+        # never reaches the monitoring KPIs (mirrors instance creation).
+        _audit.append(
+            EventType.ACTIVITY_STARTED,
+            after.id,
+            after.schema_id,
+            schema_version=after.schema_version,
+            node_id=req.node_id,
+            label=_label_of(schema, req.node_id),
+        )
     return after
 
 
@@ -1825,17 +1830,20 @@ def post_complete_activity(
             before, schema, req.node_id, req.data, agent_id=acting_agent, context=_context
         )
     )
-    _audit.append(
-        EventType.ACTIVITY_COMPLETED,
-        after.id,
-        after.schema_id,
-        schema_version=after.schema_version,
-        node_id=req.node_id,
-        label=_label_of(schema, req.node_id),
-        agent_id=acting_agent,
-    )
-    _record_completion(before, after)
-    _drive_pushes()
+    if not before.is_test:
+        # A throw-away test instance stays out of the audit log / KPIs and
+        # triggers no external side effects (mirrors instance creation).
+        _audit.append(
+            EventType.ACTIVITY_COMPLETED,
+            after.id,
+            after.schema_id,
+            schema_version=after.schema_version,
+            node_id=req.node_id,
+            label=_label_of(schema, req.node_id),
+            agent_id=acting_agent,
+        )
+        _record_completion(before, after)
+        _drive_pushes()
     return after
 
 
@@ -1855,14 +1863,16 @@ def post_adhoc_insert(instance_id: str, req: AdhocInsertRequest) -> ProcessInsta
             instance, schema, req.after_node_id, req.label, resolver=_resolver
         )
     )
-    _audit.append(
-        EventType.ADHOC_INSERTED,
-        after.id,
-        after.schema_id,
-        schema_version=after.schema_version,
-        node_id=req.after_node_id,
-        detail={"label": req.label},
-    )
+    if not instance.is_test:
+        # Test instances record no audit events (see instance creation).
+        _audit.append(
+            EventType.ADHOC_INSERTED,
+            after.id,
+            after.schema_id,
+            schema_version=after.schema_version,
+            node_id=req.after_node_id,
+            detail={"label": req.label},
+        )
     return after
 
 
@@ -1879,13 +1889,15 @@ def post_adhoc_delete(instance_id: str, req: AdhocDeleteRequest) -> ProcessInsta
             instance, schema, req.node_id, resolver=_resolver
         )
     )
-    _audit.append(
-        EventType.ADHOC_DELETED,
-        after.id,
-        after.schema_id,
-        schema_version=after.schema_version,
-        node_id=req.node_id,
-    )
+    if not instance.is_test:
+        # Test instances record no audit events (see instance creation).
+        _audit.append(
+            EventType.ADHOC_DELETED,
+            after.id,
+            after.schema_id,
+            schema_version=after.schema_version,
+            node_id=req.node_id,
+        )
     return after
 
 

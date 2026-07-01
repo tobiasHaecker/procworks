@@ -8,6 +8,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
+### Behoben
+- **Test-Instanzen verschmutzen das Monitoring nicht mehr über ihren gesamten
+  Lebenszyklus:** Eine als `is_test` markierte Test-Instanz eines Entwurfs war
+  bisher nur *beim Start* von Audit-Log und KPIs ausgenommen – das Abschließen
+  von Schritten (`/complete`), das Starten von Schritten (`/start`) sowie
+  Ad-hoc-Änderungen schrieben dennoch `ACTIVITY_STARTED`/`ACTIVITY_COMPLETED`/
+  `INSTANCE_COMPLETED`/`ADHOC_*`-Ereignisse in das globale Audit-Log und lösten
+  Webhooks/HTTP-Pushes aus. Damit sickerten Testdaten in die produktiven KPIs
+  und die Prozesslandkarte. Jetzt bleibt eine Test-Instanz über ihren **ganzen
+  Lebenszyklus** frei von Audit-Ereignissen, KPIs und externen Nebenwirkungen
+  (wie im Docstring von `POST /schemas/{id}/instances` zugesichert). Regressions-
+  test ergänzt.
+
 ### Geändert
 - **XOR-Verzweigungen sind jetzt „Correctness by Construction" (K7
   konstruktiv erzwungen):** Ein XOR-Split trägt keine frei formulierbaren
@@ -34,6 +47,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
     `procworks:model`-Erweiterung, damit K7-Modelle round-trip-fähig bleiben.
 
 ### Hinzugefügt
+- **Prüfinstanz – 4-Quadranten-Analyse-Cockpit für Entwürfe** (Web-Client,
+  rein additiv, keine Kernänderung): Modellierer/Administratoren können einen
+  **noch nicht freigegebenen Entwurf** als **Test-Instanz durchspielen**, um das
+  Modellkonzept zu erarbeiten. Der Start erfolgt aus der Modellieransicht
+  (Kopf-Button „⚗ Prüfinstanz") oder über den neuen Navigationseintrag; ein
+  Dialog fragt zunächst, **wer die Instanz startet**. Die Analyse-Sicht ist in
+  vier Quadranten geteilt: **oben links** ein auf genau diese Instanz
+  beschränktes **Monitoring** (Live-Prozesslandkarte, Fortschritt, Instanzdaten,
+  Schrittübersicht mit Status und Bearbeiter je Schritt), **oben rechts** der
+  **angemeldete Starter** (Identitätskarte mit Rollen/Abteilung) und **unten**
+  zwei **frei wählbare, umschaltbare beteiligte Agenten**, deren **Arbeitsliste
+  jeweils auf diese laufende Instanz gefiltert** ist. Aufgaben lassen sich pro
+  Agent direkt erledigen, sodass der Ablauf Schritt für Schritt nachgespielt
+  werden kann. Die Sicht trägt – wie der
+  gesamte Client – **keine Korrektheitslogik**; die instanzgefilterte
+  Arbeitsliste entsteht rein clientseitig aus `GET /instances/{id}/tasks`, alle
+  Abschlüsse laufen über den geprüften `/complete`-Endpunkt.
 - **Organigramm & Abteilungs-/Agenten-Hervorhebung in der Ressourcensicht**
   (Web-Client, rein additiv): Rechts unter „Ressourcen-Befunde" zeigt ein
   **Organigramm** die modellierte Organisation (Abteilungs-Hierarchie mit
