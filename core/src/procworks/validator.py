@@ -35,9 +35,11 @@ from procworks.model import (
     StaffRule,
     StaffRuleKind,
     SubProcessBinding,
+    WidgetKind,
     XorDecision,
     XorDecisionKind,
     discriminator_kind,
+    widget_matches_type,
 )
 
 #: Resolves a (schema id, version) reference to a schema, or ``None`` if the
@@ -67,7 +69,8 @@ def validate(
 ) -> list[ValidationFinding]:
     """Run structural rules K1-K3, data-flow D1-D4, resource rules Z1-Z4,
     activity-repository rules A1-A3, composition rules H1-H4/F1-F4, the
-    integration rules I1-I4 and the temporal rules T1-T2.
+    integration rules I1-I4, the temporal rules T1-T2 and the input-mask rules
+    U1-U3.
 
     ``resolver`` enables the cross-schema composition checks (target must be
     RELEASED, type-conformant mappings, acyclic hierarchy). Without it only the
@@ -87,6 +90,7 @@ def validate(
     findings += _check_k7_xor_decisions(schema)
     findings += _check_k3_reachability(schema)
     findings += _check_data_flow(schema)
+    findings += _check_forms(schema)
     findings += _check_connectors(schema)
     findings += _check_resources(schema)
     findings += _check_integration(schema)
@@ -462,6 +466,26 @@ def _check_d1_supply(schema: ProcessSchema) -> list[ValidationFinding]:
     return findings
 
 
+def _subprocess_output_writes(schema: ProcessSchema) -> dict[str, set[str]]:
+    """Parent elements each SUBPROCESS node writes back via its output mapping.
+
+    At runtime :func:`execution._join_subprocess` copies the child's mapped
+    outputs into these parent elements, so they behave like a mandatory write of
+    the sub-process node in the parent's data-flow analysis. Only mappings whose
+    parent element actually exists are counted (H2 reports unknown ones).
+    """
+
+    writes: dict[str, set[str]] = {}
+    for node_id, binding in schema.sub_process_bindings.items():
+        node = schema.nodes.get(node_id)
+        if node is None or node.type is not NodeType.SUBPROCESS:
+            continue
+        for parent_eid in binding.output_mapping.values():
+            if parent_eid in schema.data_elements:
+                writes.setdefault(node_id, set()).add(parent_eid)
+    return writes
+
+
 def _must_written_before(schema: ProcessSchema) -> dict[str, set[str]]:
     """For each node, the elements guaranteed written on all paths before it.
 
@@ -476,6 +500,11 @@ def _must_written_before(schema: ProcessSchema) -> dict[str, set[str]]:
     for access in schema.data_accesses:
         if access.mode in WRITE_MODES and access.mandatory:
             mandatory_writes.setdefault(access.node_id, set()).add(access.element_id)
+    # A SUBPROCESS writes its mapped outputs back into the parent when it joins
+    # (Datenübergabe), so those parent elements are guaranteed available once the
+    # sub-process node completes -- exactly like a mandatory write.
+    for node_id, produced in _subprocess_output_writes(schema).items():
+        mandatory_writes.setdefault(node_id, set()).update(produced)
 
     before: dict[str, set[str]] = {nid: set() for nid in schema.nodes}
     available_after: dict[str, set[str]] = {}
@@ -505,6 +534,11 @@ def _check_d2_concurrent_writes(schema: ProcessSchema) -> list[ValidationFinding
     for access in schema.data_accesses:
         if access.mode in WRITE_MODES and access.mandatory:
             writers.setdefault(access.element_id, []).append(access.node_id)
+    # Sub-process output write-backs count as mandatory writes too (D2 must see
+    # them so two parallel sub-processes cannot race on the same parent element).
+    for node_id, produced in _subprocess_output_writes(schema).items():
+        for element_id in produced:
+            writers.setdefault(element_id, []).append(node_id)
 
     for element_id, nodes in writers.items():
         unique = sorted(set(nodes))
@@ -590,6 +624,164 @@ def _must_executed_before(schema: ProcessSchema) -> dict[str, set[str]]:
         before[node_id] = guaranteed
         executed_after[node_id] = guaranteed | {node_id}
     return before
+
+
+# --- U1-U3: input-mask (form designer) well-formedness -------------------
+
+
+def _check_forms(schema: ProcessSchema) -> list[ValidationFinding]:
+    """Input-mask rules U1-U3 (additive; silent for models without masks).
+
+    A form is a presentation layer over ``data_accesses``: every field mirrors a
+    read/write link. These rules keep mask and data flow consistent so that the
+    Correct-by-Construction guarantee -- in particular D1 (no read without a
+    write on every path) -- also holds for masks. U-rules never fire unless a
+    schema carries at least one mask.
+    """
+
+    findings: list[ValidationFinding] = []
+    if not schema.forms:
+        return findings
+
+    for node_id, form in schema.forms.items():
+        node = schema.nodes.get(node_id)
+        if node is None:
+            findings.append(
+                ValidationFinding(
+                    rule="U1",
+                    node_id=node_id,
+                    message=f"input mask references unknown node '{node_id}'",
+                )
+            )
+            continue
+        if node.type is not NodeType.ACTIVITY:
+            findings.append(
+                ValidationFinding(
+                    rule="U1",
+                    node_id=node_id,
+                    message="input masks are only allowed on ACTIVITY nodes",
+                )
+            )
+
+        accesses = schema.accesses_of(node_id)
+        seen_field_ids: set[str] = set()
+        seen_elements: set[str] = set()
+        for field in form.fields:
+            if field.id in seen_field_ids:
+                findings.append(
+                    ValidationFinding(
+                        rule="U2",
+                        node_id=node_id,
+                        message=f"duplicate field id '{field.id}' in input mask",
+                    )
+                )
+            seen_field_ids.add(field.id)
+            if field.element_id in seen_elements:
+                findings.append(
+                    ValidationFinding(
+                        rule="U2",
+                        node_id=node_id,
+                        message=(
+                            f"element '{field.element_id}' is bound by more than one "
+                            "field in the same mask"
+                        ),
+                    )
+                )
+            seen_elements.add(field.element_id)
+            if not field.label.strip():
+                findings.append(
+                    ValidationFinding(
+                        rule="U2",
+                        node_id=node_id,
+                        message=f"field '{field.id}' has an empty label",
+                    )
+                )
+
+            element = schema.data_elements.get(field.element_id)
+            if element is None:
+                findings.append(
+                    ValidationFinding(
+                        rule="U1",
+                        node_id=node_id,
+                        message=(
+                            f"field '{field.id}' references unknown data element "
+                            f"'{field.element_id}'"
+                        ),
+                    )
+                )
+                continue
+
+            if not widget_matches_type(field.widget, element.data_type):
+                findings.append(
+                    ValidationFinding(
+                        rule="U2",
+                        node_id=node_id,
+                        message=(
+                            f"widget '{field.widget}' cannot present element "
+                            f"'{field.element_id}' of type '{element.data_type}'"
+                        ),
+                    )
+                )
+
+            if field.widget is WidgetKind.DROPDOWN:
+                options = [o.strip() for o in field.options]
+                if len(field.options) < 2 or any(not o for o in options):
+                    findings.append(
+                        ValidationFinding(
+                            rule="U2",
+                            node_id=node_id,
+                            message=(
+                                f"dropdown field '{field.id}' needs at least two "
+                                "non-empty options"
+                            ),
+                        )
+                    )
+                elif len(set(options)) != len(options):
+                    findings.append(
+                        ValidationFinding(
+                            rule="U2",
+                            node_id=node_id,
+                            message=f"dropdown field '{field.id}' has duplicate options",
+                        )
+                    )
+            elif field.options:
+                findings.append(
+                    ValidationFinding(
+                        rule="U2",
+                        node_id=node_id,
+                        message=(
+                            f"field '{field.id}' carries options but its widget is "
+                            f"not a dropdown"
+                        ),
+                    )
+                )
+
+            # U3: the field must be backed by a matching data access. This is the
+            # bridge that lets D1 govern "no read without a prior write".
+            modes = {a.mode for a in accesses if a.element_id == field.element_id}
+            if field.mode in WRITE_MODES and not any(m in WRITE_MODES for m in modes):
+                findings.append(
+                    ValidationFinding(
+                        rule="U3",
+                        node_id=node_id,
+                        message=(
+                            f"input field '{field.id}' has no write access for element "
+                            f"'{field.element_id}'"
+                        ),
+                    )
+                )
+            if field.mode in READ_MODES and not any(m in READ_MODES for m in modes):
+                findings.append(
+                    ValidationFinding(
+                        rule="U3",
+                        node_id=node_id,
+                        message=(
+                            f"display field '{field.id}' has no read access for element "
+                            f"'{field.element_id}'"
+                        ),
+                    )
+                )
+    return findings
 
 
 # --- C1-C3: external data connectors -------------------------------------
@@ -1305,6 +1497,24 @@ def _check_subprocess_target(
                             f"{kind} type mismatch: target '{target_eid}' is "
                             f"{target_el.data_type.value}, parent '{parent_eid}' is "
                             f"{parent_el.data_type.value}"
+                        ),
+                    )
+                )
+    # H2 (data-passing soundness): a mapped OUTPUT is written back into the
+    # parent and may be read downstream, so the child must guarantee to produce
+    # it on every path. Otherwise the whole model would not be runnable.
+    if binding.output_mapping:
+        guaranteed = _must_written_before(target).get(target.end_node().id, set())
+        for target_eid, parent_eid in binding.output_mapping.items():
+            if target_eid in target.data_elements and target_eid not in guaranteed:
+                findings.append(
+                    ValidationFinding(
+                        rule="H2",
+                        node_id=node_id,
+                        message=(
+                            f"output '{target_eid}' is not written on every path of "
+                            f"sub-process '{binding.target_schema_id}', so parent "
+                            f"element '{parent_eid}' would be undefined"
                         ),
                     )
                 )

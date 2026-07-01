@@ -13,6 +13,7 @@ from procworks import (
     ExecutionContext,
     add_data_element,
     complete_activity,
+    connect_data,
     create_empty_schema,
     insert_subprocess,
     instantiate,
@@ -21,6 +22,7 @@ from procworks import (
     worklist,
 )
 from procworks.model import (
+    AccessMode,
     DataType,
     InstanceState,
     NodeState,
@@ -57,8 +59,10 @@ def test_subprocess_spawns_and_joins_child() -> None:
     sub = serial_insert(sub, "Bearbeiten", after_node_id="start")
     sub = add_data_element(sub, "eingabe", DataType.FLOAT, element_id="eingabe")
     sub = add_data_element(sub, "ergebnis", DataType.FLOAT, element_id="ergebnis")
-    sub = release(sub)
     child_act = _activity_id(sub)
+    # the child guarantees to produce its output so the composition is runnable
+    sub = connect_data(sub, child_act, "ergebnis", AccessMode.WRITE)
+    sub = release(sub)
 
     parent = create_empty_schema("Haupt", schema_id="parent")
     parent = serial_insert(parent, "Vorbereiten", after_node_id="start")

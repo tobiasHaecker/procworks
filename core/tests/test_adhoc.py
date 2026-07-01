@@ -16,6 +16,7 @@ from procworks import (
     ExecutionContext,
     adhoc_delete_node,
     adhoc_insert_activity,
+    adhoc_rename_activity,
     complete_activity,
     create_empty_schema,
     instantiate,
@@ -156,3 +157,54 @@ def test_delete_non_activity_violates_r1() -> None:
     with pytest.raises(CorrectnessError) as exc:
         adhoc_delete_node(instance, schema, "end")
     assert exc.value.findings[0].rule == "R1"
+
+
+def test_rename_unreached_activity_succeeds() -> None:
+    schema = _released_serial()
+    activities = _ordered_activities(schema)
+    b_id = activities[1]
+
+    store = InMemoryInstanceStore()
+    context = ExecutionContext(_resolver_for(schema), store)
+    instance = instantiate(schema, context=context)
+
+    instance = adhoc_rename_activity(instance, schema, b_id, "B (angepasst)")
+    assert instance.ad_hoc_schema is not None
+    assert instance.ad_hoc_schema.nodes[b_id].label == "B (angepasst)"
+    assert len(instance.ad_hoc_deltas) == 1
+    # Markings are untouched by a pure relabelling.
+    assert instance.node_states[b_id] is NodeState.NOT_ACTIVATED
+
+    # The instance still runs to completion against the variant.
+    variant = instance.ad_hoc_schema
+    a_id = activities[0]
+    instance = complete_activity(instance, variant, a_id, context=context)
+    instance = complete_activity(instance, variant, b_id, context=context)
+    assert instance.state is InstanceState.COMPLETED
+
+
+def test_rename_reached_node_violates_r1() -> None:
+    schema = _released_serial()
+    activities = _ordered_activities(schema)
+    a_id = activities[0]
+
+    store = InMemoryInstanceStore()
+    context = ExecutionContext(_resolver_for(schema), store)
+    instance = instantiate(schema, context=context)
+
+    # A is already ready (ACTIVATED) -> reached, history must not be rewritten.
+    with pytest.raises(CorrectnessError) as exc:
+        adhoc_rename_activity(instance, schema, a_id, "Zu spaet")
+    assert exc.value.findings[0].rule == "R1"
+
+
+def test_rename_gateway_violates_r1() -> None:
+    schema = _released_serial()
+    store = InMemoryInstanceStore()
+    context = ExecutionContext(_resolver_for(schema), store)
+    instance = instantiate(schema, context=context)
+
+    with pytest.raises(CorrectnessError) as exc:
+        adhoc_rename_activity(instance, schema, "end", "Neues Ende")
+    assert exc.value.findings[0].rule == "R1"
+

@@ -8,6 +8,88 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+- **Wiederverwendbare Subprozesse mit Submodell-Bibliothek und
+  Datenübergabe:** Eine Aktivität lässt sich jetzt in einen **Subprozess
+  umwandeln**, der an ein eigenständig entwickeltes, freigegebenes **Submodell**
+  bindet. Freigegebene Modelle können per Kopf-Schalter „Als Submodell" in eine
+  **Bibliothek** aufgenommen werden (`GET /subprocess-library`) und stehen dann
+  in anderen Modellen zur Wiederverwendung bereit. Beim Zuweisen gilt
+  **Correctness by Construction**: die Verbindung wird nur gesetzt, wenn das
+  resultierende Gesamtmodell konsistent und lauffähig bleibt – der Kern erzwingt
+  H1–H4 (gültige Bindung, freigegebenes Ziel, typkonforme Zuordnung, azyklische
+  Hierarchie) samt vollständiger Validierung, andernfalls wird die Umwandlung
+  mit HTTP 422 abgelehnt. Die **Datenübergabe** ist Teil der Korrektheit: die
+  Ergebnis-Zuordnung eines Subprozesses zählt jetzt als garantierte Schreibung
+  im Datenfluss (D1/D2), und eine Ausgabe darf nur gemappt werden, wenn das
+  Submodell sie auf **jedem** Pfad erzeugt (sonst H2). Neue Kern-Operationen
+  `convert_activity_to_subprocess`, `set_subprocess_binding` und
+  `set_library_subprocess`; neues additives Feld
+  `ProcessSchema.is_library_subprocess`; neue Endpunkte
+  `POST /schemas/{id}/convert-to-subprocess`,
+  `POST /schemas/{id}/subprocess-binding`, `POST /schemas/{id}/library-flag` und
+  `GET /subprocess-library`. Im Knoten-Inspektor des Modellierers: „In Subprozess
+  umwandeln" (Aktivität) bzw. „Zuordnung / Datenübergabe ändern" (Subprozess)
+  mit geführtem Zuordnungsdialog (nur typgleiche Elternelemente werden
+  angeboten). Tests ergänzt (Kern und API).
+
+- **Popup-Hinweis bei neu eintreffenden Aufgaben:** Ist die Aufgabenliste eines
+  Agenten geöffnet und trifft während der Live-Aktualisierung eine neue Aufgabe
+  ein, erscheint ein kurzer, sich selbst schließender Hinweis (Toast). Bei einer
+  einzelnen neuen Aufgabe „Neue Aufgabe eingetroffen", bei mehreren die Anzahl
+  samt der ersten betroffenen Aufgaben. Der Hinweis verschwindet nach wenigen
+  Sekunden von selbst.
+
+- **Ad-hoc-Anpassung einer einzelnen Instanz im Ausführungsmodul:** Der
+  Modellierer kann eine **laufende Instanz** an die Realität anpassen, ohne das
+  freigegebene Schema zu ändern – kein Modell ist so statisch, dass bei
+  Abweichungen am Prozess vorbei gearbeitet werden muss. Im Ausführungs-Detail
+  einer Instanz gibt es ein Panel „Instanz anpassen (Ad-hoc)" (Rollen
+  `modeler`/`admin`, nur bei laufender Instanz) mit den Aktionen **Schritt
+  einfügen**, **Schritt umbenennen** und **Schritt entfernen**. Die UI bietet
+  vorab nur zulässige Ziele im noch nicht ausgeführten Bereich an; der Kern
+  erzwingt weiterhin **R1** (Zustandskompatibilität – bereits erreichte Schritte
+  sind eingefroren) und **R2** (Korrektheitserhalt – Prüfung der Instanz-Variante
+  vor Übernahme). Neue Kern-Operation `adhoc_rename_activity` (rein
+  strukturneutrale Umbenennung eines noch nicht erreichten `ACTIVITY`/
+  `SUBPROCESS`-Knotens), neuer Endpunkt
+  `POST /instances/{id}/adhoc/rename` und neues Audit-Ereignis `ADHOC_RENAMED`
+  (fließt in die Ad-hoc-Zählung der Prozesslandkarte ein). Die bereits
+  vorhandenen Operationen `adhoc_insert_activity`/`adhoc_delete_node` sind damit
+  erstmals über die Weboberfläche erreichbar; angewendete Anpassungen werden aus
+  `ad_hoc_deltas` protokolliert angezeigt. Tests ergänzt (Kern und API).
+
+- **Eingabemasken-Designer im Modellierungsmodul:** Für jede Aktivität lässt
+  sich jetzt per Auswahl eine **Eingabemaske** gestalten – Textfelder,
+  Textbereiche, Zahlenfelder, Auswahllisten (Dropdown), Kontrollkästchen und
+  Datumsfelder werden aus den Datenelementen zusammengestellt. Die **Anordnung
+  entsteht automatisch** (geordnete Feldliste → Raster, inkl. Live-Vorschau);
+  es sind keine Koordinaten im Modell nötig. Jedes Feld wird an ein Datenelement
+  gebunden und ist eine Präsentationsschicht über einem Datenzugriff, sodass
+  **Correctness by Construction** auch für Masken gilt: Ein Anzeigefeld (READ)
+  erzeugt einen Lesezugriff, den der Kern über **D1** ablehnt, wenn das Element
+  nicht auf **jedem** Pfad zuvor gesetzt wurde („kein Read ohne Set") – gerade
+  auch bei komplex verzweigten Modellen. Neue Meta-Modell-Typen `Form`,
+  `FormField`, `WidgetKind` und `ProcessSchema.forms`; neue Operationen
+  `set_form`/`delete_form`; neue Validierungsregeln **U1–U3** (Wohlgeformtheit
+  der Maske und Konsistenz von Maske ↔ Datenfluss); neue Endpunkte
+  `POST`/`DELETE /schemas/{id}/nodes/{node_id}/form` (Rollen `modeler`/`admin`).
+  Die Maske wird im BPMN-Export über die `procworks:model`-Erweiterung
+  verlustfrei mitgeführt. Zur Laufzeit rendert der Web-Client den Abschluss-
+  dialog eines Schritts aus der gestalteten Maske (Dropdowns, Kontrollkästchen
+  usw.); Anzeigefelder bleiben schreibgeschützt. Umfangreiche Tests ergänzt.
+- **Instanzdaten direkt nach dem Start eingeben:** Direkt nach dem Aktivieren
+  einer Instanz lassen sich jetzt Datenwerte eingeben, **ohne zuvor die erste
+  Aktivität abschließen zu müssen**. Neuer Endpunkt `PUT /instances/{id}/data`
+  (Rollen `operator`/`modeler`/`admin`) setzt Prozessvariablen direkt auf einer
+  Instanz, typgeprüft gegen das Schema (D3; unbekannte Elemente oder Typfehler →
+  HTTP 422) und ohne Audit-Ereignis (keine KPI-Verschmutzung). Im Web-Client
+  bietet die Ausführungssicht dazu im Bereich **„Instanzdaten"** die Schaltfläche
+  **„Daten eingeben"**, die alle `INSTANCE`-Datenelemente des Schemas mit ihren
+  aktuellen Werten zur Eingabe anbietet (`EXTERNAL`-Elemente bleiben ausgenommen,
+  da sie zur Laufzeit über Connectoren aufgelöst werden). Regressionstests
+  ergänzt.
+
 ### Behoben
 - **Test-Instanzen verschmutzen das Monitoring nicht mehr über ihren gesamten
   Lebenszyklus:** Eine als `is_test` markierte Test-Instanz eines Entwurfs war
@@ -22,6 +104,12 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   test ergänzt.
 
 ### Geändert
+- **Seitliches Scrollen in der Modellansicht:** In der Kontrollfluss-Canvas
+  (Modellierung, Ausführung, Monitoring) verschiebt das Mausrad bzw. die
+  Trackpad-Wischgeste die Ansicht jetzt frei in beide Richtungen; horizontales
+  Wischen (oder Umschalt+Rad) scrollt seitlich, `Strg`/Pinch zoomt weiterhin
+  zum Zeiger. Der Canvas-Hinweistext wurde entsprechend angepasst.
+
 - **XOR-Verzweigungen sind jetzt „Correctness by Construction" (K7
   konstruktiv erzwungen):** Ein XOR-Split trägt keine frei formulierbaren
   Bedingungen mehr, sondern eine **strukturierte, entscheidbare Partition** über

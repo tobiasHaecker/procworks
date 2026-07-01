@@ -35,6 +35,8 @@ from procworks.model import (
     FollowUpLink,
     FollowUpMode,
     FollowUpTrigger,
+    Form,
+    FormField,
     LifecycleState,
     Node,
     NodeType,
@@ -48,6 +50,7 @@ from procworks.model import (
     TemplateParameter,
     TimeConstraint,
     ValueClass,
+    WidgetKind,
     WorkItemPriority,
     XorBranch,
     XorDecision,
@@ -421,6 +424,7 @@ def _drop_nodes(candidate: ProcessSchema, to_remove: set[str]) -> None:
         candidate.service_bindings.pop(removed, None)
         candidate.sub_process_bindings.pop(removed, None)
         candidate.xor_decisions.pop(removed, None)
+        candidate.forms.pop(removed, None)
     candidate.data_accesses = [
         a for a in candidate.data_accesses if a.node_id not in to_remove
     ]
@@ -624,6 +628,161 @@ def connect_data(
             param_type=param_type,
         )
     )
+    return raise_if_invalid(candidate)
+
+
+@dataclass
+class FormFieldSpec:
+    """Input intent for one field of an input mask (form designer).
+
+    ``label`` defaults to the element's name; ``options`` are the choices of a
+    dropdown. ``mode`` decides the data-flow direction: a WRITE field is an
+    input that sets the element, a READ field displays a previously written
+    value (governed by D1).
+    """
+
+    element_id: str
+    widget: WidgetKind
+    label: str | None = None
+    mode: AccessMode = AccessMode.WRITE
+    required: bool = True
+    options: tuple[str, ...] = ()
+    help_text: str | None = None
+
+
+def set_form(
+    schema: ProcessSchema,
+    node_id: str,
+    *,
+    title: str = "",
+    fields: list[FormFieldSpec],
+) -> ProcessSchema:
+    """Design (or replace) the input mask of an ACTIVITY (form designer).
+
+    Every field is a presentation layer over a data access, so this operation
+    also (re-)synchronises the node's data accesses for the elements the mask
+    manages: a WRITE field yields a write access, a READ field a read access.
+    The mask is laid out automatically -- ``fields`` is just an ordered list.
+
+    requires: schema editable; node exists and is an ACTIVITY; at least one
+              field; every field's element exists; no element bound twice.
+    ensures:  the mask exists, its data accesses are in place and all rules --
+              in particular D1 (kein Read ohne vorheriges Set) and U1-U3 --
+              still hold.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type is not NodeType.ACTIVITY:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="input masks are only allowed on ACTIVITY nodes",
+                )
+            ]
+        )
+    if not fields:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="an input mask needs at least one field",
+                )
+            ]
+        )
+
+    managed: set[str] = set()
+    form_fields: list[FormField] = []
+    for spec in fields:
+        if spec.element_id not in candidate.data_elements:
+            raise CorrectnessError(
+                [
+                    ValidationFinding(
+                        rule="OP",
+                        node_id=node_id,
+                        message=f"data element '{spec.element_id}' does not exist",
+                    )
+                ]
+            )
+        if spec.element_id in managed:
+            raise CorrectnessError(
+                [
+                    ValidationFinding(
+                        rule="OP",
+                        node_id=node_id,
+                        message=(
+                            f"data element '{spec.element_id}' is bound by more than "
+                            "one field"
+                        ),
+                    )
+                ]
+            )
+        managed.add(spec.element_id)
+        label = spec.label if spec.label else candidate.data_elements[spec.element_id].name
+        form_fields.append(
+            FormField(
+                id=_new_id("field"),
+                element_id=spec.element_id,
+                widget=spec.widget,
+                label=label,
+                mode=spec.mode,
+                required=spec.required,
+                options=list(spec.options),
+                help_text=spec.help_text,
+            )
+        )
+
+    # Re-synchronise this node's data accesses for the managed elements so the
+    # mask and the data flow stay consistent (rule U3), then let D1-D4 judge.
+    candidate.data_accesses = [
+        a
+        for a in candidate.data_accesses
+        if not (a.node_id == node_id and a.element_id in managed)
+    ]
+    for spec in fields:
+        candidate.data_accesses.append(
+            DataAccess(
+                node_id=node_id,
+                element_id=spec.element_id,
+                mode=spec.mode,
+                mandatory=spec.required,
+            )
+        )
+    candidate.forms[node_id] = Form(node_id=node_id, title=title, fields=form_fields)
+    return raise_if_invalid(candidate)
+
+
+def delete_form(schema: ProcessSchema, node_id: str) -> ProcessSchema:
+    """Remove the input mask of a node and the accesses it managed.
+
+    requires: schema editable; the node carries a mask.
+    ensures:  the mask and its managed data accesses are gone; all rules hold.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    form = candidate.forms.get(node_id)
+    if form is None:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message=f"node '{node_id}' has no input mask",
+                )
+            ]
+        )
+    managed = {f.element_id for f in form.fields}
+    candidate.data_accesses = [
+        a
+        for a in candidate.data_accesses
+        if not (a.node_id == node_id and a.element_id in managed)
+    ]
+    del candidate.forms[node_id]
     return raise_if_invalid(candidate)
 
 
@@ -1195,6 +1354,112 @@ def set_subprocess_mapping(
     binding.input_mapping = dict(input_mapping)
     binding.output_mapping = dict(output_mapping)
     return raise_if_invalid(candidate, resolver)
+
+
+def convert_activity_to_subprocess(
+    schema: ProcessSchema,
+    node_id: str,
+    target_schema_id: str,
+    target_version: int,
+    *,
+    input_mapping: dict[str, str] | None = None,
+    output_mapping: dict[str, str] | None = None,
+    resolver: SchemaResolver | None = None,
+) -> ProcessSchema:
+    """Turn an existing ACTIVITY into a SUBPROCESS bound to a target schema.
+
+    The sub-process is developed independently (its own RELEASED schema) and
+    reused here. The activity becomes an opaque black box that delegates to the
+    child, so its activity-specific artefacts (data accesses, input mask, staff
+    rule, service binding, priority, temporal constraint) are dropped; data now
+    flows through the binding's input/output mapping.
+
+    requires: schema editable (R0); node exists and is an ACTIVITY.
+    ensures:  the node is a SUBPROCESS with a binding and the WHOLE model stays
+              correct and runnable (H1-H4 incl. data-passing soundness, plus all
+              structural/data rules) -- Correctness by Construction on binding.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type is not NodeType.ACTIVITY:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="only an ACTIVITY can be converted into a sub-process",
+                )
+            ]
+        )
+    node.type = NodeType.SUBPROCESS
+    candidate.data_accesses = [a for a in candidate.data_accesses if a.node_id != node_id]
+    candidate.forms.pop(node_id, None)
+    candidate.staff_rules.pop(node_id, None)
+    candidate.service_bindings.pop(node_id, None)
+    candidate.node_priorities.pop(node_id, None)
+    candidate.time_constraints.pop(node_id, None)
+    candidate.sub_process_bindings[node_id] = SubProcessBinding(
+        node_id=node_id,
+        target_schema_id=target_schema_id,
+        target_version=target_version,
+        input_mapping=input_mapping or {},
+        output_mapping=output_mapping or {},
+    )
+    return raise_if_invalid(candidate, resolver)
+
+
+def set_subprocess_binding(
+    schema: ProcessSchema,
+    node_id: str,
+    target_schema_id: str,
+    target_version: int,
+    *,
+    input_mapping: dict[str, str] | None = None,
+    output_mapping: dict[str, str] | None = None,
+    resolver: SchemaResolver | None = None,
+) -> ProcessSchema:
+    """Re-point an existing SUBPROCESS node to a (different) target schema.
+
+    Like :func:`convert_activity_to_subprocess`, the binding is only accepted if
+    the resulting whole model stays correct and runnable (CbC).
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    node = _require_node(candidate, node_id)
+    if node.type is not NodeType.SUBPROCESS:
+        raise CorrectnessError(
+            [
+                ValidationFinding(
+                    rule="OP",
+                    node_id=node_id,
+                    message="node is not a SUBPROCESS",
+                )
+            ]
+        )
+    candidate.sub_process_bindings[node_id] = SubProcessBinding(
+        node_id=node_id,
+        target_schema_id=target_schema_id,
+        target_version=target_version,
+        input_mapping=input_mapping or {},
+        output_mapping=output_mapping or {},
+    )
+    return raise_if_invalid(candidate, resolver)
+
+
+def set_library_subprocess(schema: ProcessSchema, flag: bool) -> ProcessSchema:
+    """Mark or unmark this schema as a reusable sub-process for the library.
+
+    The flag is pure catalogue metadata (it never affects validation), so it may
+    be toggled in any lifecycle state -- in particular on a RELEASED schema,
+    which is exactly when it becomes bindable elsewhere.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    candidate.is_library_subprocess = bool(flag)
+    return candidate
 
 
 def link_follow_up(

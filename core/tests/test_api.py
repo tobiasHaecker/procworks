@@ -303,6 +303,82 @@ def test_instance_run_via_api() -> None:
     assert resp.json()["state"] == "COMPLETED"
 
 
+def test_put_instance_data_right_after_start() -> None:
+    # Data can be entered immediately after starting an instance, before the
+    # first activity is worked on -- no activity completion required.
+    sid = client.post("/schemas", json={"name": "FrueheDaten"}).json()["id"]
+    client.post(f"/schemas/{sid}/serial-insert", json={"label": "S", "after_node_id": "start"})
+    client.post(
+        f"/schemas/{sid}/data-elements",
+        json={"name": "betrag", "data_type": "INTEGER", "element_id": "betrag"},
+    )
+    client.post(f"/schemas/{sid}/release")
+
+    iid = client.post(f"/schemas/{sid}/instances").json()["id"]
+    # No activity has been completed yet.
+    assert client.get(f"/instances/{iid}").json()["data_values"] == {}
+
+    resp = client.put(f"/instances/{iid}/data", json={"values": {"betrag": 1200}})
+    assert resp.status_code == 200
+    assert resp.json()["betrag"] == 1200
+    assert client.get(f"/instances/{iid}").json()["data_values"] == {"betrag": 1200}
+
+
+def test_put_instance_data_rejects_unknown_and_mistyped() -> None:
+    sid = client.post("/schemas", json={"name": "FrueheDatenBad"}).json()["id"]
+    client.post(f"/schemas/{sid}/serial-insert", json={"label": "S", "after_node_id": "start"})
+    client.post(
+        f"/schemas/{sid}/data-elements",
+        json={"name": "betrag", "data_type": "INTEGER", "element_id": "betrag"},
+    )
+    client.post(f"/schemas/{sid}/release")
+    iid = client.post(f"/schemas/{sid}/instances").json()["id"]
+
+    unknown = client.put(f"/instances/{iid}/data", json={"values": {"ghost": 1}})
+    assert unknown.status_code == 422
+    assert "D3" in {f["rule"] for f in unknown.json()["detail"]["findings"]}
+
+    mistyped = client.put(f"/instances/{iid}/data", json={"values": {"betrag": "viel"}})
+    assert mistyped.status_code == 422
+    assert "D3" in {f["rule"] for f in mistyped.json()["detail"]["findings"]}
+
+
+def test_set_form_via_api_and_reject_mismatch() -> None:
+    sid = client.post("/schemas", json={"name": "MaskeApi"}).json()["id"]
+    client.post(
+        f"/schemas/{sid}/serial-insert",
+        json={"label": "Erfassen", "after_node_id": "start"},
+    )
+    node = next(
+        nid
+        for nid, n in client.get(f"/schemas/{sid}").json()["nodes"].items()
+        if n.get("label") == "Erfassen"
+    )
+    client.post(
+        f"/schemas/{sid}/data-elements",
+        json={"name": "Name", "data_type": "STRING", "element_id": "name"},
+    )
+
+    ok = client.post(
+        f"/schemas/{sid}/nodes/{node}/form",
+        json={"title": "Antrag", "fields": [{"element_id": "name", "widget": "TEXT"}]},
+    )
+    assert ok.status_code == 200
+    assert node in ok.json()["forms"]
+
+    # A checkbox cannot present a STRING element -> 422 with a U2 finding.
+    bad = client.post(
+        f"/schemas/{sid}/nodes/{node}/form",
+        json={"fields": [{"element_id": "name", "widget": "CHECKBOX"}]},
+    )
+    assert bad.status_code == 422
+    assert "U2" in {f["rule"] for f in bad.json()["detail"]["findings"]}
+
+    deleted = client.request("DELETE", f"/schemas/{sid}/nodes/{node}/form")
+    assert deleted.status_code == 200
+    assert node not in deleted.json()["forms"]
+
+
 def test_monitoring_revision_tracks_progress() -> None:
     # The lightweight revision counter backs the web client's auto-refresh: it
     # must strictly increase whenever runtime progress is recorded so a poll can
@@ -424,6 +500,94 @@ def test_subprocess_execution_via_api() -> None:
     assert parent["state"] == "COMPLETED"
 
 
+def _released_producer_via_api(name: str, schema_hint: str) -> str:
+    """Released sub-process guaranteeing to write ``ergebnis``; returns its id."""
+
+    tid = client.post("/schemas", json={"name": name}).json()["id"]
+    r = client.post(f"/schemas/{tid}/serial-insert", json={"label": "R", "after_node_id": "start"})
+    act = next(n["id"] for n in r.json()["nodes"].values() if n["type"] == "ACTIVITY")
+    client.post(
+        f"/schemas/{tid}/data-elements",
+        json={"name": "ergebnis", "data_type": "FLOAT", "element_id": "ergebnis"},
+    )
+    client.post(
+        f"/schemas/{tid}/data-access",
+        json={"node_id": act, "element_id": "ergebnis", "mode": "WRITE"},
+    )
+    client.post(f"/schemas/{tid}/release")
+    return tid
+
+
+def test_convert_activity_to_subprocess_via_api() -> None:
+    tid = _released_producer_via_api("KonvZiel", "conv")
+    pid = client.post("/schemas", json={"name": "KonvHaupt"}).json()["id"]
+    r = client.post(
+        f"/schemas/{pid}/serial-insert", json={"label": "Schritt", "after_node_id": "start"}
+    )
+    node_id = next(n["id"] for n in r.json()["nodes"].values() if n["type"] == "ACTIVITY")
+    client.post(
+        f"/schemas/{pid}/data-elements",
+        json={"name": "summe", "data_type": "FLOAT", "element_id": "summe"},
+    )
+    resp = client.post(
+        f"/schemas/{pid}/convert-to-subprocess",
+        json={
+            "node_id": node_id,
+            "target_schema_id": tid,
+            "target_version": 1,
+            "output_mapping": {"ergebnis": "summe"},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["nodes"][node_id]["type"] == "SUBPROCESS"
+    assert client.get(f"/schemas/{pid}/validation").json()["correct"] is True
+
+
+def test_convert_activity_unproduced_output_returns_422() -> None:
+    # target that declares but never guarantees to write ``ergebnis``
+    tid = client.post("/schemas", json={"name": "LoseZiel"}).json()["id"]
+    client.post(f"/schemas/{tid}/serial-insert", json={"label": "T", "after_node_id": "start"})
+    client.post(
+        f"/schemas/{tid}/data-elements",
+        json={"name": "ergebnis", "data_type": "FLOAT", "element_id": "ergebnis"},
+    )
+    client.post(f"/schemas/{tid}/release")
+    pid = client.post("/schemas", json={"name": "LoseHaupt"}).json()["id"]
+    r = client.post(
+        f"/schemas/{pid}/serial-insert", json={"label": "Schritt", "after_node_id": "start"}
+    )
+    node_id = next(n["id"] for n in r.json()["nodes"].values() if n["type"] == "ACTIVITY")
+    client.post(
+        f"/schemas/{pid}/data-elements",
+        json={"name": "summe", "data_type": "FLOAT", "element_id": "summe"},
+    )
+    resp = client.post(
+        f"/schemas/{pid}/convert-to-subprocess",
+        json={
+            "node_id": node_id,
+            "target_schema_id": tid,
+            "target_version": 1,
+            "output_mapping": {"ergebnis": "summe"},
+        },
+    )
+    assert resp.status_code == 422
+    assert "H2" in {f["rule"] for f in resp.json()["detail"]["findings"]}
+
+
+def test_subprocess_library_flag_and_listing() -> None:
+    tid = _released_producer_via_api("BibZiel", "lib")
+    # not listed until flagged
+    ids_before = {e["id"] for e in client.get("/subprocess-library").json()}
+    assert tid not in ids_before
+    resp = client.post(f"/schemas/{tid}/library-flag", json={"is_library": True})
+    assert resp.status_code == 200
+    assert resp.json()["is_library_subprocess"] is True
+    library = client.get("/subprocess-library").json()
+    entry = next(e for e in library if e["id"] == tid)
+    assert entry["version"] == 1
+    assert any(el["id"] == "ergebnis" for el in entry["data_elements"])
+
+
 def _released_two_step(name: str) -> str:
     """Create + release a start -> A -> B -> end schema; return its id."""
 
@@ -472,6 +636,42 @@ def test_adhoc_insert_after_executed_node_returns_422() -> None:
     assert resp.status_code == 422
     rules = {f["rule"] for f in resp.json()["detail"]["findings"]}
     assert "R1" in rules
+
+
+def test_adhoc_rename_via_api_updates_variant_label() -> None:
+    sid = _released_two_step("AdhocUmbenennen")
+    iid = client.post(f"/schemas/{sid}/instances").json()["id"]
+    # B is the not-yet-reached activity (start -> A -> B -> end).
+    b_id = next(
+        nid
+        for nid, n in client.get(f"/schemas/{sid}").json()["nodes"].items()
+        if n.get("label") == "B"
+    )
+
+    resp = client.post(
+        f"/instances/{iid}/adhoc/rename",
+        json={"node_id": b_id, "label": "B (angepasst)"},
+    )
+    assert resp.status_code == 200
+    instance = resp.json()
+    assert instance["ad_hoc_schema"]["nodes"][b_id]["label"] == "B (angepasst)"
+    assert instance["ad_hoc_deltas"]
+
+    audit = client.get(f"/instances/{iid}/audit").json()
+    assert any(ev["event_type"] == "ADHOC_RENAMED" for ev in audit)
+
+
+def test_adhoc_rename_reached_node_returns_422() -> None:
+    sid = _released_two_step("AdhocUmbenennenFehler")
+    iid = client.post(f"/schemas/{sid}/instances").json()["id"]
+    a_id = client.get(f"/instances/{iid}/worklist").json()["ready_activities"][0]
+
+    resp = client.post(
+        f"/instances/{iid}/adhoc/rename",
+        json={"node_id": a_id, "label": "Zu spaet"},
+    )
+    assert resp.status_code == 422
+    assert "R1" in {f["rule"] for f in resp.json()["detail"]["findings"]}
 
 
 def test_revision_via_api_bumps_version() -> None:

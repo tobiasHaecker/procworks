@@ -85,6 +85,7 @@ from procworks.model import (
     ValueClass,
     WebhookDelivery,
     WebhookSubscription,
+    WidgetKind,
     WorkItemPriority,
     value_matches_type,
 )
@@ -464,6 +465,21 @@ class ConnectDataRequest(BaseModel):
     param_type: DataType | None = None
 
 
+class FormFieldRequest(BaseModel):
+    element_id: str = Field(..., examples=["betrag"])
+    widget: WidgetKind = Field(..., examples=[WidgetKind.NUMBER])
+    label: str | None = Field(default=None, examples=["Betrag"])
+    mode: AccessMode = Field(default=AccessMode.WRITE, examples=[AccessMode.WRITE])
+    required: bool = True
+    options: list[str] = Field(default_factory=list)
+    help_text: str | None = None
+
+
+class SetFormRequest(BaseModel):
+    title: str = ""
+    fields: list[FormFieldRequest]
+
+
 class RegisterConnectorRequest(BaseModel):
     name: str = Field(..., examples=["ERP-Kunden"])
     kind: ConnectorKind = Field(..., examples=[ConnectorKind.MS_SQL])
@@ -605,6 +621,39 @@ class SubprocessMappingRequest(BaseModel):
     output_mapping: dict[str, str] = Field(default_factory=dict)
 
 
+class ConvertToSubprocessRequest(BaseModel):
+    node_id: str = Field(..., examples=["act_1"])
+    target_schema_id: str = Field(..., examples=["schema_2"])
+    target_version: int = Field(..., examples=[1])
+    input_mapping: dict[str, str] = Field(default_factory=dict)
+    output_mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class SetSubprocessBindingRequest(BaseModel):
+    node_id: str = Field(..., examples=["sub_1"])
+    target_schema_id: str = Field(..., examples=["schema_2"])
+    target_version: int = Field(..., examples=[1])
+    input_mapping: dict[str, str] = Field(default_factory=dict)
+    output_mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class LibraryFlagRequest(BaseModel):
+    is_library: bool = Field(..., examples=[True])
+
+
+class LibraryDataElement(BaseModel):
+    id: str
+    name: str
+    data_type: str
+
+
+class SubprocessLibraryEntry(BaseModel):
+    id: str
+    name: str
+    version: int
+    data_elements: list[LibraryDataElement]
+
+
 class LinkFollowUpRequest(BaseModel):
     target_schema_id: str = Field(..., examples=["schema_3"])
     target_version: int | None = None
@@ -631,6 +680,11 @@ class AdhocInsertRequest(BaseModel):
 
 class AdhocDeleteRequest(BaseModel):
     node_id: str = Field(..., examples=["act_2"])
+
+
+class AdhocRenameRequest(BaseModel):
+    node_id: str = Field(..., examples=["act_2"])
+    label: str = Field(..., examples=["Zusatzpruefung (angepasst)"])
 
 
 class RevisionRequest(BaseModel):
@@ -1200,6 +1254,42 @@ def post_connect_data(schema_id: str, req: ConnectDataRequest) -> ProcessSchema:
 
 
 @app.post(
+    "/schemas/{schema_id}/nodes/{node_id}/form",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_set_form(
+    schema_id: str, node_id: str, req: SetFormRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    specs = [
+        ops.FormFieldSpec(
+            element_id=f.element_id,
+            widget=f.widget,
+            label=f.label,
+            mode=f.mode,
+            required=f.required,
+            options=tuple(f.options),
+            help_text=f.help_text,
+        )
+        for f in req.fields
+    ]
+    return _commit_or_422(
+        lambda: ops.set_form(schema, node_id, title=req.title, fields=specs)
+    )
+
+
+@app.delete(
+    "/schemas/{schema_id}/nodes/{node_id}/form",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def delete_schema_form(schema_id: str, node_id: str) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(lambda: ops.delete_form(schema, node_id))
+
+
+@app.post(
     "/schemas/{schema_id}/connectors",
     response_model=ProcessSchema,
     dependencies=[_model],
@@ -1626,6 +1716,91 @@ def post_subprocess_mapping(
     )
 
 
+@app.post(
+    "/schemas/{schema_id}/convert-to-subprocess",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_convert_to_subprocess(
+    schema_id: str, req: ConvertToSubprocessRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(
+        lambda: ops.convert_activity_to_subprocess(
+            schema,
+            req.node_id,
+            req.target_schema_id,
+            req.target_version,
+            input_mapping=req.input_mapping,
+            output_mapping=req.output_mapping,
+            resolver=_resolver,
+        )
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/subprocess-binding",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_subprocess_binding(
+    schema_id: str, req: SetSubprocessBindingRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(
+        lambda: ops.set_subprocess_binding(
+            schema,
+            req.node_id,
+            req.target_schema_id,
+            req.target_version,
+            input_mapping=req.input_mapping,
+            output_mapping=req.output_mapping,
+            resolver=_resolver,
+        )
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/library-flag",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_library_flag(schema_id: str, req: LibraryFlagRequest) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    return _commit_or_422(lambda: ops.set_library_subprocess(schema, req.is_library))
+
+
+@app.get(
+    "/subprocess-library",
+    response_model=list[SubprocessLibraryEntry],
+    dependencies=[_read],
+)
+def get_subprocess_library() -> list[SubprocessLibraryEntry]:
+    entries: list[SubprocessLibraryEntry] = []
+    for sid in _store.list_ids():
+        schema = _store.get(sid)
+        if schema is None:
+            continue
+        if not schema.is_library_subprocess:
+            continue
+        if schema.lifecycle_state is not LifecycleState.RELEASED:
+            continue
+        entries.append(
+            SubprocessLibraryEntry(
+                id=schema.id,
+                name=schema.name,
+                version=schema.version,
+                data_elements=[
+                    LibraryDataElement(
+                        id=el.id, name=el.name, data_type=el.data_type.value
+                    )
+                    for el in schema.data_elements.values()
+                ],
+            )
+        )
+    return entries
+
+
 @app.post("/schemas/{schema_id}/follow-up", response_model=ProcessSchema, dependencies=[_model])
 def post_link_follow_up(schema_id: str, req: LinkFollowUpRequest) -> ProcessSchema:
     schema = _get_or_404(schema_id)
@@ -1901,6 +2076,32 @@ def post_adhoc_delete(instance_id: str, req: AdhocDeleteRequest) -> ProcessInsta
     return after
 
 
+@app.post(
+    "/instances/{instance_id}/adhoc/rename",
+    response_model=ProcessInstance,
+    dependencies=[_run],
+)
+def post_adhoc_rename(instance_id: str, req: AdhocRenameRequest) -> ProcessInstance:
+    instance = _get_instance_or_404(instance_id)
+    schema = _effective_schema_for(instance)
+    after = _commit_instance_or_422(
+        lambda: adhoc.adhoc_rename_activity(
+            instance, schema, req.node_id, req.label, resolver=_resolver
+        )
+    )
+    if not instance.is_test:
+        # Test instances record no audit events (see instance creation).
+        _audit.append(
+            EventType.ADHOC_RENAMED,
+            after.id,
+            after.schema_id,
+            schema_version=after.schema_version,
+            node_id=req.node_id,
+            detail={"label": req.label},
+        )
+    return after
+
+
 # --- schema evolution + instance migration (M1-M5) -----------------------
 
 
@@ -2062,6 +2263,36 @@ def _validate_data_values(
                 )
             )
     return findings
+
+
+@app.put(
+    "/instances/{instance_id}/data",
+    response_model=dict[str, object],
+    dependencies=[_run],
+)
+def put_instance_data(instance_id: str, req: SetDataRequest) -> dict[str, object]:
+    """Set process variable values directly on an instance (type-checked, D3).
+
+    This lets an operator/modeller enter instance data at any time -- in
+    particular right after starting an instance, before the first activity is
+    worked on -- without having to go through an activity completion. Only
+    ``INSTANCE`` data elements can be written; unknown elements or type
+    mismatches are rejected with HTTP 422 (D3). The write records no audit
+    event, so it never pollutes the monitoring KPIs.
+    """
+
+    instance = _get_instance_or_404(instance_id)
+    schema = _effective_schema_for(instance)
+    findings = _validate_data_values(schema, req.values)
+    if findings:
+        raise HTTPException(
+            status_code=422,
+            detail={"findings": [f.model_dump() for f in findings]},
+        )
+    updated = instance.model_copy(deep=True)
+    updated.data_values.update(req.values)
+    _instances.put(updated)
+    return dict(updated.data_values)
 
 
 @_v1.post(

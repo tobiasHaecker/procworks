@@ -92,6 +92,20 @@ const GATEWAYS = new Set([
   NODE_TYPE.AND_SPLIT, NODE_TYPE.AND_JOIN, NODE_TYPE.XOR_SPLIT, NODE_TYPE.XOR_JOIN,
 ]);
 const DATA_TYPES = ["INTEGER", "FLOAT", "STRING", "DATE", "BOOLEAN", "URI"];
+// Presentation widgets available per data type for the input-mask designer
+// (mirrors model._WIDGETS_FOR_TYPE; the server has the final say via rule U2).
+const WIDGETS_FOR_TYPE = {
+  STRING: ["TEXT", "TEXTAREA", "DROPDOWN"],
+  URI: ["TEXT"],
+  INTEGER: ["NUMBER"],
+  FLOAT: ["NUMBER"],
+  BOOLEAN: ["CHECKBOX"],
+  DATE: ["DATE"],
+};
+const WIDGET_LABELS = {
+  TEXT: "Textfeld", TEXTAREA: "Textbereich", NUMBER: "Zahlenfeld",
+  DROPDOWN: "Auswahlliste", CHECKBOX: "Kontrollk\u00E4stchen", DATE: "Datumsfeld",
+};
 const CONNECTOR_KINDS = ["MS_SQL", "MYSQL", "DYNAMICS_365", "SAP", "CUSTOM"];
 // Domain events a webhook may subscribe to (mirrors outbox.WEBHOOK_EVENTS). The
 // server validates the selection; this list only drives the checkbox picker.
@@ -208,6 +222,7 @@ function authHeaders(hasBody) {
 const api = {
   get: (p) => request("GET", p),
   post: (p, b) => request("POST", p, b === undefined ? {} : b),
+  put: (p, b) => request("PUT", p, b === undefined ? {} : b),
   patch: (p, b) => request("PATCH", p, b === undefined ? {} : b),
   del: (p) => request("DELETE", p),
   raw: async (p) => {
@@ -360,7 +375,7 @@ function renderGraph(schema, opts) {
   });
 
   const wrap = el("div", { class: "canvas-wrap" }, root,
-    el("div", { class: "canvas-hint" }, "Mausrad: Zoom \u00B7 Ziehen: Verschieben"));
+    el("div", { class: "canvas-hint" }, "Scrollen/Wischen: Verschieben \u00B7 Strg/Pinch: Zoom \u00B7 Ziehen: Verschieben"));
   attachPanZoom(wrap, root);
   return wrap;
 }
@@ -491,19 +506,31 @@ function attachPanZoom(wrap, svgEl) {
   }
   apply();
 
-  // Wheel = zoom towards / away from the pointer: keep the model point under
-  // the cursor fixed while the scale changes.
+  // Wheel handling:
+  //  * Pinch-to-zoom (trackpad) and Ctrl+wheel (mouse) arrive with ctrlKey and
+  //    zoom towards / away from the pointer (model point under the cursor stays
+  //    fixed while the scale changes).
+  //  * A plain two-finger trackpad swipe (or mouse wheel) pans the canvas -- in
+  //    both directions, so sideways scrolling works. Shift+wheel maps a
+  //    vertical mouse wheel to horizontal panning.
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const rect = wrap.getBoundingClientRect();
-    const px = e.clientX - rect.left, py = e.clientY - rect.top;
-    const cx = (px - tx) / scale, cy = (py - ty) / scale;
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const next = Math.min(MAX, Math.max(MIN, scale * factor));
-    if (next === scale) return;
-    scale = next;
-    tx = px - cx * scale;
-    ty = py - cy * scale;
+    if (e.ctrlKey) {
+      const rect = wrap.getBoundingClientRect();
+      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      const cx = (px - tx) / scale, cy = (py - ty) / scale;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const next = Math.min(MAX, Math.max(MIN, scale * factor));
+      if (next === scale) return;
+      scale = next;
+      tx = px - cx * scale;
+      ty = py - cy * scale;
+      apply();
+      return;
+    }
+    let dx = e.deltaX, dy = e.deltaY;
+    if (e.shiftKey && dx === 0) { dx = dy; dy = 0; }
+    tx -= dx; ty -= dy;
     apply();
   }, { passive: false });
 
@@ -694,6 +721,7 @@ function viewModel() {
       validationBadge(),
       el("span", { class: "spacer", style: "flex:1" }),
       el("button", { class: "btn small ghost", onClick: exportBpmn }, "BPMN-Export"),
+      libraryToggleButton(schema),
       draft
         ? el("button", { class: "btn small green", onClick: releaseSchema }, "Freigeben")
         : el("button", { class: "btn small primary", onClick: () => { state.view = "run"; setActiveNav(); render(); } }, "Zur Ausf\u00FChrung"),
@@ -769,6 +797,37 @@ function nodeInspectorPanel() {
     body.appendChild(el("div", { class: "row", style: "gap:8px" },
       el("button", { class: "btn small primary", onClick: () => renameNode(node.id, input.value) }, "Umbenennen"),
       el("button", { class: "btn small danger", onClick: () => deleteNode(node.id) }, "Entfernen")));
+    if (node.type === NODE_TYPE.ACTIVITY) {
+      const form = schema.forms && schema.forms[node.id];
+      body.appendChild(el("div", { class: "hr" }));
+      body.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" },
+        form
+          ? `Eingabemaske: ${form.fields.length} Feld(er)${form.title ? " \u2013 \u201E" + form.title + "\u201C" : ""}.`
+          : "Noch keine Eingabemaske \u2013 Felder per Auswahl zusammenstellen."));
+      const row = el("div", { class: "row", style: "gap:8px" },
+        el("button", { class: "btn small", onClick: () => openFormDesigner(node.id) },
+          form ? "Maske bearbeiten" : "Eingabemaske gestalten"));
+      if (form) {
+        row.appendChild(el("button", { class: "btn small danger", onClick: () => deleteForm(node.id) }, "Maske entfernen"));
+      }
+      body.appendChild(row);
+      // Wiederverwendung: Aktivitaet durch ein freigegebenes Submodell ersetzen.
+      // Die Bindung gilt Correct-by-Construction: der Kern lehnt sie ab, wenn
+      // das Gesamtmodell dadurch inkonsistent oder nicht lauffaehig wuerde.
+      body.appendChild(el("div", { class: "hr" }));
+      body.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" },
+        "Wiederverwendung: diesen Schritt durch ein freigegebenes Submodell aus der Bibliothek ersetzen \u2013 inkl. Daten\u00FCbergabe."));
+      body.appendChild(el("button", { class: "btn small", onClick: () => openSubprocessBinding(node, "convert") }, "In Subprozess umwandeln"));
+    } else if (node.type === NODE_TYPE.SUBPROCESS) {
+      const bnd = (schema.sub_process_bindings || {})[node.id];
+      body.appendChild(el("div", { class: "hr" }));
+      body.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" },
+        bnd
+          ? `Gebunden an Submodell \u201E${bnd.target_schema_id}\u201C (v${bnd.target_version}).`
+          : "Noch kein Submodell gebunden."));
+      body.appendChild(el("button", { class: "btn small", onClick: () => openSubprocessBinding(node, "rebind") },
+        "Zuordnung / Daten\u00FCbergabe \u00E4ndern"));
+    }
   } else if (SPLIT_TYPES.has(node.type)) {
     body.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-bottom:8px" },
       "Verzweigung: Entfernen l\u00F6scht den gesamten Block (Split, Zweige und passenden Join)."));
@@ -814,6 +873,305 @@ function deleteNode(nodeId) {
   }, "Entfernen");
 }
 
+async function deleteForm(nodeId) {
+  openModal("Eingabemaske entfernen",
+    el("div", { class: "muted", style: "font-size:13px" },
+      "Die Eingabemaske dieses Schritts entfernen? Die zugeh\u00F6rigen Datenzugriffe der Maske werden mit gel\u00F6scht."),
+    async () => {
+      try {
+        await api.del(`/schemas/${state.schemaId}/nodes/${nodeId}/form`);
+        await refreshSchema();
+        render();
+        toast("ok", "Eingabemaske entfernt");
+      } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+    }, "Entfernen");
+}
+
+// --------------------------------------------------------------------------
+// Wiederverwendbare Subprozesse (Submodell-Bibliothek + Datenuebergabe)
+// --------------------------------------------------------------------------
+
+// Kopf-Button: markiert dieses Modell als wiederverwendbares Submodell. Der
+// Katalog-Flag ist reine Metadatenangabe (beeinflusst die Validierung nie);
+// bindbar wird ein Submodell erst nach Freigabe (siehe /subprocess-library).
+function libraryToggleButton(schema) {
+  if (!hasRole("modeler", "admin")) return null;
+  const on = schema.is_library_subprocess === true;
+  return el("button", {
+    class: "btn small" + (on ? " primary" : ""),
+    title: "Dieses Modell als wiederverwendbares Submodell f\u00FCr die Bibliothek markieren (nach Freigabe in anderen Modellen bindbar).",
+    onClick: () => toggleLibraryFlag(!on),
+  }, on ? "\u2605 Submodell" : "\u2606 Als Submodell");
+}
+
+async function toggleLibraryFlag(flag) {
+  try {
+    await api.post(`/schemas/${state.schemaId}/library-flag`, { is_library: flag });
+    await refreshSchema();
+    render();
+    toast("ok", flag ? "Als Submodell markiert" : "Submodell-Markierung entfernt");
+  } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
+}
+
+// Baut das Zuordnungsformular fuer die Datenuebergabe: je Datenelement des
+// Ziel-Submodells eine optionale Eingabe- (parent -> child) und Ergebnis-
+// Zuordnung (child -> parent). Nur typgleiche Elternelemente werden angeboten
+// (H2); der Kern prueft Typkonformitaet und Erzeugungsgarantie verbindlich.
+function subprocessMappingForm(target, parentSchema) {
+  const parentEls = Object.values((parentSchema && parentSchema.data_elements) || {});
+  const grid = el("div", { class: "form-grid" });
+  const rows = [];
+  if (!target.data_elements.length) {
+    grid.appendChild(el("div", { class: "muted", style: "font-size:12px" },
+      "Das Submodell hat keine Datenelemente \u2013 es wird nur der Kontrollfluss eingebunden."));
+  }
+  target.data_elements.forEach((te) => {
+    const options = () => [el("option", { value: "" }, "\u2013 keine \u2013"),
+      ...parentEls.filter((pe) => pe.data_type === te.data_type)
+        .map((pe) => el("option", { value: pe.id }, pe.name))];
+    const inSel = el("select", null, ...options());
+    const outSel = el("select", null, ...options());
+    rows.push({ te, inSel, outSel });
+    grid.appendChild(el("div", { class: "field" },
+      el("div", { style: "font-weight:600;font-size:13px" }, `${te.name} (${te.data_type})`),
+      el("div", { class: "row", style: "gap:8px" },
+        el("label", { class: "field", style: "flex:1" }, "Eingabe von", inSel),
+        el("label", { class: "field", style: "flex:1" }, "Ergebnis nach", outSel))));
+  });
+  const read = () => {
+    const input_mapping = {}, output_mapping = {};
+    rows.forEach(({ te, inSel, outSel }) => {
+      if (inSel.value) input_mapping[te.id] = inSel.value;
+      if (outSel.value) output_mapping[te.id] = outSel.value;
+    });
+    return { input_mapping, output_mapping };
+  };
+  return { grid, read };
+}
+
+// Aktivitaet in einen Subprozess umwandeln ("convert") bzw. die Bindung eines
+// bestehenden SUBPROCESS-Knotens aendern ("rebind"). Beides ist Correct by
+// Construction: die Verbindung wird nur gesetzt, wenn das resultierende
+// Gesamtmodell konsistent und lauffaehig bleibt (der Kern antwortet sonst 422).
+async function openSubprocessBinding(node, mode) {
+  let library;
+  try { library = await api.get("/subprocess-library"); }
+  catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return; }
+  if (!library.length) {
+    toast("info", "Keine freigegebenen Submodelle in der Bibliothek. Markiere zuerst ein freigegebenes Schema als Submodell.");
+    return;
+  }
+  const bnd = (state.schema.sub_process_bindings || {})[node.id];
+  const targetSel = el("select", null,
+    ...library.map((t) => el("option", { value: t.id }, `${t.name} (v${t.version})`)));
+  if (mode === "rebind" && bnd && library.some((t) => t.id === bnd.target_schema_id)) {
+    targetSel.value = bnd.target_schema_id;
+  }
+  const mapHost = el("div");
+  const buildMap = () => {
+    const t = library.find((x) => x.id === targetSel.value);
+    clear(mapHost);
+    if (!t) return;
+    const form = subprocessMappingForm(t, state.schema);
+    mapHost._read = form.read;
+    mapHost.appendChild(el("div", { class: "muted", style: "font-size:12px;margin:6px 0" },
+      "Daten\u00FCbergabe: ordne die Elemente des Submodells den Datenelementen dieses Modells zu."));
+    mapHost.appendChild(form.grid);
+  };
+  targetSel.addEventListener("change", buildMap);
+  buildMap();
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Submodell aus Bibliothek", targetSel), mapHost);
+  const isConvert = mode === "convert";
+  openModal(isConvert ? "In Subprozess umwandeln" : "Zuordnung / Daten\u00FCbergabe \u00E4ndern",
+    body, async () => {
+      const t = library.find((x) => x.id === targetSel.value);
+      if (!t) { toast("info", "Bitte ein Submodell w\u00E4hlen."); return false; }
+      const { input_mapping, output_mapping } = mapHost._read ? mapHost._read() : { input_mapping: {}, output_mapping: {} };
+      const path = isConvert ? "convert-to-subprocess" : "subprocess-binding";
+      try {
+        await api.post(`/schemas/${state.schemaId}/${path}`, {
+          node_id: node.id,
+          target_schema_id: t.id,
+          target_version: t.version,
+          input_mapping,
+          output_mapping,
+        });
+        await refreshSchema();
+        render();
+        toast("ok", isConvert ? "Aktivit\u00E4t in Subprozess umgewandelt" : "Zuordnung aktualisiert");
+      } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+    }, isConvert ? "Umwandeln" : "\u00DCbernehmen");
+}
+
+
+  const dtype = elem ? elem.data_type : "STRING";
+  const coerce = (raw) => {
+    if (dtype === "INTEGER") return parseInt(raw, 10);
+    if (dtype === "FLOAT") return parseFloat(raw);
+    return raw;
+  };
+  if (widget === "CHECKBOX") {
+    const input = el("input", { type: "checkbox" });
+    if (current === true || current === "true" || current === "1") input.checked = true;
+    return { control: input, read: () => input.checked };
+  }
+  if (widget === "TEXTAREA") {
+    const input = el("textarea", { rows: "3", placeholder: elem ? elem.name : "" });
+    if (current != null) input.value = String(current);
+    return { control: input, read: () => (input.value === "" ? undefined : input.value) };
+  }
+  if (widget === "DROPDOWN") {
+    const input = el("select", null,
+      el("option", { value: "" }, "\u2013 bitte w\u00E4hlen \u2013"),
+      ...(options || []).map((o) => el("option", { value: o }, o)));
+    if (current != null) input.value = String(current);
+    return { control: input, read: () => (input.value === "" ? undefined : input.value) };
+  }
+  const type = widget === "NUMBER" ? "number" : widget === "DATE" ? "date" : "text";
+  const input = el("input", { type, placeholder: elem ? elem.name : "" });
+  if (current != null) input.value = String(current);
+  return { control: input, read: () => (input.value === "" ? undefined : coerce(input.value)) };
+}
+
+// Visueller Eingabemasken-Designer: Felder per Auswahl zusammenstellen; die
+// Anordnung entsteht automatisch (geordnete Liste -> Grid). Jedes Feld wird auf
+// einen Datenzugriff abgebildet, daher gilt Correctness by Construction (der
+// Kern lehnt u.a. jedes Lesefeld ohne vorheriges Schreiben ab -- D1).
+function openFormDesigner(nodeId) {
+  const schema = state.schema;
+  const elements = Object.values(schema.data_elements || {});
+  if (!elements.length) {
+    toast("info", "Zuerst Datenelemente in der Datensicht anlegen.");
+    return;
+  }
+  const existing = (schema.forms || {})[nodeId];
+  let title = existing ? existing.title : "";
+  const fields = existing
+    ? existing.fields.map((f) => ({
+        element_id: f.element_id, widget: f.widget, label: f.label,
+        mode: f.mode, required: f.required, options: (f.options || []).slice(),
+      }))
+    : [];
+  const container = el("div", { class: "form-designer" });
+
+  const defaultField = () => {
+    const elem = elements[0];
+    return {
+      element_id: elem.id, widget: WIDGETS_FOR_TYPE[elem.data_type][0],
+      label: elem.name, mode: "WRITE", required: true, options: [],
+    };
+  };
+
+  function previewMask() {
+    if (!fields.length) return el("div", { class: "muted", style: "font-size:12px" }, "Noch keine Felder.");
+    const grid = el("div", { class: "form-grid" });
+    fields.forEach((f) => {
+      const elem = schema.data_elements[f.element_id];
+      const { control } = maskControl(elem, f.widget, f.options, null);
+      control.setAttribute("disabled", "disabled");
+      grid.appendChild(el("label", { class: "field" },
+        (f.label || (elem ? elem.name : f.element_id)) + (f.required ? " *" : ""), control));
+    });
+    return grid;
+  }
+
+  function fieldRow(f, idx) {
+    const elem = schema.data_elements[f.element_id];
+    const elemSel = el("select", null,
+      ...elements.map((e) => el("option", { value: e.id }, `${e.name} (${e.data_type})`)));
+    elemSel.value = f.element_id;
+    elemSel.addEventListener("change", () => {
+      const prev = schema.data_elements[f.element_id];
+      f.element_id = elemSel.value;
+      const next = schema.data_elements[f.element_id];
+      // Keep the label in sync while it is still the untouched default.
+      if (!f.label || (prev && f.label === prev.name)) f.label = next.name;
+      if (!WIDGETS_FOR_TYPE[next.data_type].includes(f.widget)) f.widget = WIDGETS_FOR_TYPE[next.data_type][0];
+      if (f.widget !== "DROPDOWN") f.options = [];
+      renderDesigner();
+    });
+    const allowed = elem ? WIDGETS_FOR_TYPE[elem.data_type] : ["TEXT"];
+    const widgetSel = el("select", null,
+      ...allowed.map((w) => el("option", { value: w }, WIDGET_LABELS[w])));
+    widgetSel.value = f.widget;
+    widgetSel.addEventListener("change", () => {
+      f.widget = widgetSel.value;
+      if (f.widget !== "DROPDOWN") f.options = [];
+      renderDesigner();
+    });
+    const labelInput = el("input", { type: "text", value: f.label });
+    labelInput.addEventListener("input", () => { f.label = labelInput.value; });
+    const modeSel = el("select", null,
+      el("option", { value: "WRITE" }, "Eingabe (schreibt)"),
+      el("option", { value: "READ" }, "Anzeige (liest)"));
+    modeSel.value = f.mode;
+    modeSel.addEventListener("change", () => { f.mode = modeSel.value; });
+    const reqBox = el("input", { type: "checkbox" });
+    reqBox.checked = f.required;
+    reqBox.addEventListener("change", () => { f.required = reqBox.checked; });
+
+    const cells = [
+      el("div", { class: "fd-cell" }, el("span", { class: "fd-cap" }, "Datenelement"), elemSel),
+      el("div", { class: "fd-cell" }, el("span", { class: "fd-cap" }, "Darstellung"), widgetSel),
+      el("div", { class: "fd-cell" }, el("span", { class: "fd-cap" }, "Beschriftung"), labelInput),
+      el("div", { class: "fd-cell" }, el("span", { class: "fd-cap" }, "Richtung"), modeSel),
+      el("div", { class: "fd-cell fd-req" },
+        el("label", { class: "row", style: "gap:6px;align-items:center" }, reqBox, "Pflicht")),
+    ];
+    if (f.widget === "DROPDOWN") {
+      const optInput = el("input", {
+        type: "text", value: (f.options || []).join(", "), placeholder: "Option A, Option B",
+      });
+      optInput.addEventListener("input", () => {
+        f.options = optInput.value.split(",").map((s) => s.trim()).filter((s) => s.length);
+      });
+      cells.push(el("div", { class: "fd-cell fd-wide" },
+        el("span", { class: "fd-cap" }, "Optionen (kommagetrennt)"), optInput));
+    }
+    cells.push(el("button", { class: "btn small danger fd-del", onClick: () => { fields.splice(idx, 1); renderDesigner(); } }, "Entfernen"));
+    return el("div", { class: "fd-field" }, ...cells);
+  }
+
+  function renderDesigner() {
+    clear(container);
+    const titleInput = el("input", { type: "text", value: title, placeholder: "Titel der Maske (optional)" });
+    titleInput.addEventListener("input", () => { title = titleInput.value; });
+    container.appendChild(el("label", { class: "field" }, "Maskentitel", titleInput));
+
+    const list = el("div", { class: "fd-list" });
+    fields.forEach((f, idx) => list.appendChild(fieldRow(f, idx)));
+    container.appendChild(list);
+
+    container.appendChild(el("button", {
+      class: "btn small", onClick: () => { fields.push(defaultField()); renderDesigner(); },
+    }, "+ Feld hinzuf\u00FCgen"));
+
+    container.appendChild(el("div", { class: "fd-preview" },
+      el("div", { class: "fd-preview-h" }, "Vorschau \u2013 automatische Anordnung"),
+      previewMask()));
+  }
+
+  renderDesigner();
+  openModal(existing ? "Eingabemaske bearbeiten" : "Eingabemaske gestalten", container, async () => {
+    if (!fields.length) { toast("err", "Mindestens ein Feld ist erforderlich."); return false; }
+    const payload = {
+      title,
+      fields: fields.map((f) => ({
+        element_id: f.element_id, widget: f.widget, label: f.label,
+        mode: f.mode, required: f.required,
+        options: f.widget === "DROPDOWN" ? f.options : [],
+      })),
+    };
+    try {
+      await api.post(`/schemas/${state.schemaId}/nodes/${nodeId}/form`, payload);
+      await refreshSchema();
+      render();
+      toast("ok", "Eingabemaske gespeichert");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Speichern");
+}
+
 function validationBadge() {
   if (!state.validation) return el("span", null, "");
   if (state.validation.correct) return el("span", { class: "pill pill-green" }, "korrekt");
@@ -824,7 +1182,7 @@ function findingsPanel() {
   const v = state.validation;
   const body = el("div", { class: "panel-b" });
   if (!v || v.correct) {
-    body.appendChild(el("div", { class: "ok-banner" }, "\u2713 Strukturell korrekt (K/D/Z/A/C/H/F erf\u00FCllt)."));
+    body.appendChild(el("div", { class: "ok-banner" }, "\u2713 Strukturell korrekt (K/D/Z/A/C/H/F/U erf\u00FCllt)."));
   } else {
     v.findings.forEach((f) => body.appendChild(el("div", { class: "finding" },
       el("span", { class: "rule" }, f.rule),
@@ -1640,8 +1998,14 @@ async function renderInstanceDetail(container, withActions) {
     const elem = runSchema.data_elements[k];
     return [elem ? elem.name : k, String(v)];
   });
+  // Daten koennen direkt nach dem Start eingegeben werden – unabhaengig davon,
+  // ob schon eine Aktivitaet aktiviert wurde.
+  const canEditData = withActions && inst.state !== "COMPLETED"
+    && Object.values(runSchema.data_elements || {}).some((e) => e.source !== "EXTERNAL");
   const dataPanel = el("div", { class: "panel" },
-    el("div", { class: "panel-h" }, el("h2", null, "Instanzdaten")),
+    el("div", { class: "panel-h" }, el("h2", null, "Instanzdaten"),
+      canEditData ? el("span", { class: "spacer", style: "flex:1" }) : null,
+      canEditData ? el("button", { class: "btn small", onClick: () => openInstanceDataForm(runSchema, inst) }, "Daten eingeben") : null),
     el("div", { class: "panel-b" }, dataRows.length ? table(["Element", "Wert"], dataRows) : emptyState("Noch keine Werte.")));
 
   // Audit-Timeline (Schritt 15)
@@ -1671,7 +2035,137 @@ async function renderInstanceDetail(container, withActions) {
     el("div", { class: "panel-h" }, el("h2", null, "Audit-Verlauf"), el("span", { class: "sub" }, events.length + " Ereignisse")),
     tlBody);
 
-  container.appendChild(el("div", { class: "grid-2" }, graphPanel, el("div", null, wlPanel, dataPanel, timelinePanel)));
+  // Ad-hoc-Instanzanpassung (Schema-Evolution einer einzelnen Instanz, R1/R2).
+  // Der Modellierer darf eine laufende Instanz an die Realitaet anpassen, ohne
+  // das freigegebene Schema zu aendern. Angeboten werden nur Aenderungen im
+  // noch nicht ausgefuehrten Bereich (R1); der Kern prueft zusaetzlich R2.
+  const adhocPanel = (withActions && hasRole("modeler", "admin") && inst.state !== "COMPLETED")
+    ? renderAdhocPanel(runSchema, inst)
+    : null;
+
+  container.appendChild(el("div", { class: "grid-2" }, graphPanel, el("div", null, wlPanel, dataPanel, adhocPanel, timelinePanel)));
+}
+
+// Panel fuer die Ad-hoc-Anpassung einer einzelnen Instanz. Die Auswahl der
+// erlaubten Ziele spiegelt R1 aus procworks.adhoc wider (nur der noch nicht
+// ausgefuehrte Bereich ist aenderbar); der Kern setzt R1 und R2 verbindlich
+// durch, die UI bietet nur zulaessige Aktionen vorab an.
+function renderAdhocPanel(schema, inst) {
+  const nodes = schema.nodes || {};
+  const reached = (nid) => {
+    const s = (inst.node_states || {})[nid];
+    return s !== undefined && s !== "NOT_ACTIVATED";
+  };
+  const edgeSignaled = (source, target) => {
+    const st = (inst.edge_states || {})[`${source}->${target}`];
+    return st !== undefined && st !== "NOT_SIGNALED";
+  };
+  const out = (nid) => (schema.edges || []).filter((e) => e.source === nid);
+  const inc = (nid) => (schema.edges || []).filter((e) => e.target === nid);
+
+  // R1 fuer Einfuegen: Anker != END, genau eine ausgehende, noch nicht
+  // signalisierte Kante, Nachfolger noch nicht erreicht.
+  const insertAnchors = Object.values(nodes).filter((n) => {
+    if (n.type === "END") return false;
+    const o = out(n.id);
+    if (o.length !== 1) return false;
+    const succ = o[0].target;
+    return !edgeSignaled(n.id, succ) && !reached(succ);
+  });
+  // R1 fuer Umbenennen: ACTIVITY/SUBPROCESS, noch nicht erreicht.
+  const renameTargets = Object.values(nodes).filter(
+    (n) => (n.type === "ACTIVITY" || n.type === "SUBPROCESS") && !reached(n.id));
+  // R1 fuer Entfernen: serielle ACTIVITY (eine rein/eine raus), noch nicht erreicht.
+  const deleteTargets = Object.values(nodes).filter(
+    (n) => n.type === "ACTIVITY" && !reached(n.id) && inc(n.id).length === 1 && out(n.id).length === 1);
+
+  const body = el("div", { class: "panel-b" });
+  body.appendChild(el("p", { class: "muted", style: "font-size:13px;margin-top:0" },
+    "Passt diese eine Instanz an die Realit\u00E4t an, ohne das freigegebene Schema zu \u00E4ndern. " +
+    "Nur der noch nicht ausgef\u00FChrte Bereich ist \u00E4nderbar (R1); jede \u00C4nderung wird vor der \u00DCbernahme auf Korrektheit gepr\u00FCft (R2)."));
+  body.appendChild(el("div", { class: "btn-row" },
+    el("button", { class: "btn small", disabled: insertAnchors.length ? null : "disabled",
+      onClick: () => openAdhocInsert(schema, inst, insertAnchors) }, "Schritt einf\u00FCgen"),
+    el("button", { class: "btn small", disabled: renameTargets.length ? null : "disabled",
+      onClick: () => openAdhocRename(schema, inst, renameTargets) }, "Schritt umbenennen"),
+    el("button", { class: "btn small danger", disabled: deleteTargets.length ? null : "disabled",
+      onClick: () => openAdhocDelete(schema, inst, deleteTargets) }, "Schritt entfernen")));
+
+  const deltas = inst.ad_hoc_deltas || [];
+  if (deltas.length) {
+    const list = el("ul", { class: "adhoc-deltas" }, ...deltas.map((d) => el("li", null, d)));
+    body.appendChild(el("div", { class: "adhoc-log" },
+      el("div", { class: "sub", style: "margin:8px 0 4px" }, "Angewendete Anpassungen"), list));
+  }
+
+  return el("div", { class: "panel" },
+    el("div", { class: "panel-h" }, el("h2", null, "Instanz anpassen (Ad-hoc)")), body);
+}
+
+async function reloadInstance(instId) {
+  await loadInstance(instId);
+  render();
+}
+
+// Ad-hoc: neuen seriellen Schritt hinter einem Anker einfuegen.
+function openAdhocInsert(schema, inst, anchors) {
+  const anchorSel = el("select", null,
+    ...anchors.map((n) => el("option", { value: n.id }, nodeCaption(n))));
+  const labelInput = el("input", { type: "text", placeholder: "Bezeichnung des neuen Schritts" });
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Einf\u00FCgen hinter", anchorSel),
+    el("label", { class: "field" }, "Neuer Schritt", labelInput));
+  openModal("Schritt einf\u00FCgen (Ad-hoc)", body, async () => {
+    const label = labelInput.value.trim();
+    if (!label) { toast("info", "Bitte eine Bezeichnung angeben."); return false; }
+    try {
+      await api.post(`/instances/${inst.id}/adhoc/insert`, { after_node_id: anchorSel.value, label });
+      toast("ok", "Schritt eingef\u00FCgt");
+      await reloadInstance(inst.id);
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Einf\u00FCgen");
+}
+
+// Ad-hoc: noch nicht erreichten Schritt umbenennen.
+function openAdhocRename(schema, inst, targets) {
+  const targetSel = el("select", null,
+    ...targets.map((n) => el("option", { value: n.id }, nodeCaption(n))));
+  const labelInput = el("input", { type: "text", placeholder: "Neue Bezeichnung" });
+  const syncLabel = () => {
+    const n = schema.nodes[targetSel.value];
+    labelInput.value = n ? (n.label || "") : "";
+  };
+  targetSel.addEventListener("change", syncLabel);
+  syncLabel();
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Schritt", targetSel),
+    el("label", { class: "field" }, "Neue Bezeichnung", labelInput));
+  openModal("Schritt umbenennen (Ad-hoc)", body, async () => {
+    const label = labelInput.value.trim();
+    if (!label) { toast("info", "Bitte eine Bezeichnung angeben."); return false; }
+    try {
+      await api.post(`/instances/${inst.id}/adhoc/rename`, { node_id: targetSel.value, label });
+      toast("ok", "Schritt umbenannt");
+      await reloadInstance(inst.id);
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Umbenennen");
+}
+
+// Ad-hoc: noch nicht erreichten seriellen Schritt entfernen.
+function openAdhocDelete(schema, inst, targets) {
+  const targetSel = el("select", null,
+    ...targets.map((n) => el("option", { value: n.id }, nodeCaption(n))));
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Zu entfernender Schritt", targetSel),
+    el("p", { class: "muted", style: "font-size:13px" },
+      "Vorg\u00E4nger und Nachfolger werden wieder direkt verbunden."));
+  openModal("Schritt entfernen (Ad-hoc)", body, async () => {
+    try {
+      await api.post(`/instances/${inst.id}/adhoc/delete`, { node_id: targetSel.value });
+      toast("ok", "Schritt entfernt");
+      await reloadInstance(inst.id);
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Entfernen");
 }
 
 async function completeActivity(nodeId, node) {
@@ -1680,25 +2174,79 @@ async function completeActivity(nodeId, node) {
     async () => { await loadInstance(state.instanceId); render(); });
 }
 
-async function promptComplete(schema, instanceId, nodeId, label, agentId, onDone) {
-  // Pflicht-Schreibvariablen dieses Schritts abfragen
-  const writes = (schema.data_accesses || []).filter((a) => a.node_id === nodeId && (a.mode === "WRITE" || a.mode === "READ_WRITE"));
+// Instanzdaten direkt eingeben/aendern – ohne eine Aktivitaet abzuschliessen.
+// Angeboten werden alle INSTANCE-Datenelemente des Schemas (EXTERNAL-Elemente
+// werden zur Laufzeit ueber Connectoren aufgeloest und daher nicht abgefragt).
+function openInstanceDataForm(schema, inst) {
+  const elems = Object.values(schema.data_elements || {}).filter((e) => e.source !== "EXTERNAL");
+  if (!elems.length) { toast("info", "Keine Instanz-Datenelemente definiert."); return; }
   const inputs = {};
   const body = el("div", { class: "form-grid" });
-  writes.forEach((a) => {
-    const elem = schema.data_elements[a.element_id];
-    const input = el("input", { type: elem && (elem.data_type === "INTEGER" || elem.data_type === "FLOAT") ? "number" : "text", placeholder: elem ? elem.name : a.element_id });
-    inputs[a.element_id] = { input, elem };
-    body.appendChild(el("label", { class: "field" }, (elem ? elem.name : a.element_id) + ` (${elem ? elem.data_type : "?"})`, input));
+  elems.forEach((elem) => {
+    const cur = (inst.data_values || {})[elem.id];
+    const input = el("input", {
+      type: (elem.data_type === "INTEGER" || elem.data_type === "FLOAT") ? "number" : "text",
+      placeholder: elem.name,
+      value: cur === undefined || cur === null ? "" : String(cur),
+    });
+    inputs[elem.id] = { input, elem };
+    body.appendChild(el("label", { class: "field" }, `${elem.name} (${elem.data_type})`, input));
   });
+  openModal("Instanzdaten eingeben", body, async () => {
+    const values = {};
+    for (const [eid, { input, elem }] of Object.entries(inputs)) {
+      const raw = input.value;
+      if (raw === "") continue;
+      let val = raw;
+      if (elem.data_type === "INTEGER") val = parseInt(raw, 10);
+      else if (elem.data_type === "FLOAT") val = parseFloat(raw);
+      else if (elem.data_type === "BOOLEAN") val = raw === "true" || raw === "1";
+      values[eid] = val;
+    }
+    if (!Object.keys(values).length) { toast("info", "Keine Werte eingegeben."); return; }
+    try {
+      await api.put(`/instances/${inst.id}/data`, { values });
+      toast("ok", "Instanzdaten gespeichert");
+      await loadInstance(inst.id);
+      render();
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Speichern");
+}
+
+async function promptComplete(schema, instanceId, nodeId, label, agentId, onDone) {
+  // Bevorzugt die gestaltete Eingabemaske dieses Schritts; sonst generische
+  // Felder fuer die Pflicht-Schreibvariablen.
+  const form = (schema.forms || {})[nodeId];
+  const inputs = {};
+  const body = el("div", { class: "form-grid" });
+  if (form) {
+    if (form.title) body.appendChild(el("div", { class: "mask-title" }, form.title));
+    form.fields.forEach((f) => {
+      const elem = schema.data_elements[f.element_id];
+      const writable = f.mode === "WRITE" || f.mode === "READ_WRITE";
+      const { control, read } = maskControl(elem, f.widget, f.options, null);
+      if (!writable) control.setAttribute("disabled", "disabled");
+      else inputs[f.element_id] = { read, elem };
+      body.appendChild(el("label", { class: "field" },
+        f.label + (f.required && writable ? " *" : ""), control,
+        f.help_text ? el("span", { class: "field-help" }, f.help_text) : null));
+    });
+  } else {
+    const writes = (schema.data_accesses || []).filter((a) => a.node_id === nodeId && (a.mode === "WRITE" || a.mode === "READ_WRITE"));
+    writes.forEach((a) => {
+      const elem = schema.data_elements[a.element_id];
+      const widget = elem && (elem.data_type === "INTEGER" || elem.data_type === "FLOAT") ? "NUMBER" : "TEXT";
+      const { control, read } = maskControl(elem, widget, null, null);
+      inputs[a.element_id] = { read, elem };
+      body.appendChild(el("label", { class: "field" }, (elem ? elem.name : a.element_id) + ` (${elem ? elem.data_type : "?"})`, control));
+    });
+  }
   const doComplete = async () => {
     const data = {};
-    for (const [eid, { input, elem }] of Object.entries(inputs)) {
-      let val = input.value;
-      if (val === "") continue;
-      if (elem && elem.data_type === "INTEGER") val = parseInt(val, 10);
-      else if (elem && elem.data_type === "FLOAT") val = parseFloat(val);
-      else if (elem && elem.data_type === "BOOLEAN") val = val === "true" || val === "1";
+    for (const [eid, { read, elem }] of Object.entries(inputs)) {
+      let val = read();
+      if (val === undefined) continue;
+      if (typeof val === "string" && elem && elem.data_type === "BOOLEAN") val = val === "true" || val === "1";
       data[eid] = val;
     }
     try {
@@ -1709,7 +2257,7 @@ async function promptComplete(schema, instanceId, nodeId, label, agentId, onDone
       if (onDone) await onDone();
     } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   };
-  if (writes.length) openModal(`Abschlie\u00DFen: ${label}`, body, doComplete, "Abschlie\u00DFen");
+  if (form || Object.keys(inputs).length) openModal(`Abschlie\u00DFen: ${label}`, body, doComplete, "Abschlie\u00DFen");
   else doComplete();
 }
 
@@ -1901,6 +2449,7 @@ const EVENT_LABELS = {
   BRANCH_DECIDED: "Zweig entschieden",
   ADHOC_INSERTED: "Ad-hoc eingef\u00FCgt",
   ADHOC_DELETED: "Ad-hoc gel\u00F6scht",
+  ADHOC_RENAMED: "Ad-hoc umbenannt",
   INSTANCE_MIGRATED: "Instanz migriert",
   INSTANCE_COMPLETED: "Instanz abgeschlossen",
 };
@@ -1929,6 +2478,29 @@ function agentNameOf(id) {
   const org = state.schema && state.schema.org_model;
   const a = org && org.agents ? org.agents[id] : null;
   return a ? a.name : id;
+}
+
+// Track the agent whose task list is on screen plus the keys of the tasks last
+// shown there, so a task that arrives while the list is open can be announced
+// exactly once with a self-dismissing popup.
+let taskAlert = { agentId: null, keys: new Set(), primed: false };
+
+function taskKey(t) { return `${t.instance_id}:${t.node_id}`; }
+
+// Announce tasks that appeared since the last render of THIS agent's list while
+// the tasks view stayed open. The initial load (no baseline yet) and agent
+// switches only prime the baseline, so a popup pops only for genuine arrivals.
+function announceNewTasks(agentId, tasks) {
+  const keys = new Set(tasks.map(taskKey));
+  if (taskAlert.agentId === agentId && taskAlert.primed) {
+    const fresh = tasks.filter((t) => !taskAlert.keys.has(taskKey(t)));
+    if (fresh.length === 1) {
+      toast("info", "Neue Aufgabe eingetroffen", [fresh[0].label || fresh[0].node_id]);
+    } else if (fresh.length > 1) {
+      toast("info", `${fresh.length} neue Aufgaben eingetroffen`, fresh.slice(0, 5).map((t) => t.label || t.node_id));
+    }
+  }
+  taskAlert = { agentId, keys, primed: true };
 }
 
 async function viewTasks() {
@@ -1965,6 +2537,9 @@ async function viewTasks() {
   let tasks = [];
   try { tasks = await api.get(bound ? "/me/tasks" : `/agents/${agentId}/tasks`); }
   catch (err) { const d = describeError(err); toast("err", d.title, d.lines); }
+
+  // Announce tasks that arrived while this list was open (self-dismissing).
+  announceNewTasks(agentId, tasks);
 
   const body = el("div", { class: "panel-b" });
   if (!tasks.length) {

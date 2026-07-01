@@ -125,6 +125,33 @@ input[type=text], input[type=number], input[type=password], select, textarea {
 textarea { resize: vertical; min-height: 90px; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; align-items: end; }
+.field-help { font-size: 11px; color: var(--txt-dim); opacity: .8; }
+.hr { height: 1px; background: var(--line); margin: 12px 0; }
+.mask-title { font-size: 14px; font-weight: 600; color: var(--txt); grid-column: 1 / -1; }
+
+/* ---- Ad-hoc-Instanzanpassung ---- */
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.adhoc-log { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.adhoc-deltas { margin: 0; padding-left: 18px; font-size: 13px; color: var(--txt-dim); }
+.adhoc-deltas li { margin: 2px 0; }
+
+/* ---- Eingabemasken-Designer ---- */
+.modal:has(.form-designer) { width: min(880px, 94vw); }
+.form-designer { display: flex; flex-direction: column; gap: 14px; }
+.fd-list { display: flex; flex-direction: column; gap: 10px; }
+.fd-field {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;
+  align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+}
+.fd-cell { display: flex; flex-direction: column; gap: 4px; }
+.fd-cell.fd-wide { grid-column: 1 / -1; }
+.fd-cap { font-size: 11px; color: var(--txt-dim); text-transform: uppercase; letter-spacing: .04em; }
+.fd-req { justify-content: center; }
+.fd-del { align-self: end; }
+.fd-preview {
+  border: 1px dashed var(--line); border-radius: 10px; padding: 14px; background: var(--bg);
+}
+.fd-preview-h { font-size: 11px; color: var(--txt-dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
 
 /* ---- Tables ---- */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -291,6 +318,7 @@ svg.graph { display: block; min-width: 100%; user-select: none; transform-origin
 }
 .toast.ok { border-left-color: var(--green); }
 .toast.err { border-left-color: var(--red); }
+.toast.info { border-left-color: var(--accent); }
 .toast .t-title { font-weight: 700; margin-bottom: 3px; }
 .toast .t-list { margin: 4px 0 0; padding-left: 16px; color: var(--txt-dim); }
 @keyframes slidein { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }

@@ -157,6 +157,60 @@ Automatik-Bindung.
 
 ---
 
+## 5a. Wiederverwendbare Subprozesse & Submodell-Bibliothek
+
+Wiederkehrende Abläufe müssen nicht in jedem Modell neu gebaut werden. Ein
+eigenständig entwickeltes Schema lässt sich als **Submodell** bereitstellen und
+dann in beliebig vielen Hauptprozessen als **Subprozess** wiederverwenden – die
+**Datenübergabe** eingeschlossen.
+
+**Ein Submodell bereitstellen:**
+
+1. Das wiederverwendbare Schema wie gewohnt modellieren und **freigeben**
+   (nur freigegebene Schemata sind bindbar, H1).
+2. Im Kopf der Modellieren-Sicht den Schalter **„☆ Als Submodell"** aktivieren.
+   Das Modell erscheint damit in der **Bibliothek** und steht anderen Modellen
+   zur Wiederverwendung bereit. Das Flag ist reine Katalog-Markierung und
+   ändert nichts an der Prüfung des Modells.
+
+**Eine Aktivität in einen Subprozess umwandeln:**
+
+1. Im Entwurf des Hauptprozesses die betreffende **Aktivität anklicken** und im
+   Knoten-Inspektor **„In Subprozess umwandeln"** wählen.
+2. Ein **Submodell aus der Bibliothek** auswählen.
+3. Die **Datenübergabe** zuordnen: je Datenelement des Submodells lässt sich
+   optional eine **Eingabe von** (ein Datenelement des Hauptprozesses versorgt
+   den Subprozess) und ein **Ergebnis nach** (der Subprozess schreibt sein
+   Ergebnis in ein Datenelement des Hauptprozesses zurück) festlegen. Angeboten
+   werden nur **typgleiche** Elternelemente.
+4. Bestätigen. Die bisherige Aktivität wird zu einem `SUBPROCESS`-Knoten; ihre
+   aktivitätsspezifischen Angaben (Eingabemaske, Datenzugriffe, Bearbeiterregel,
+   Dienst, Priorität, Zeitangabe) entfallen, da nun das Submodell den Ablauf
+   übernimmt.
+
+Die Zuordnung eines bestehenden Subprozess-Knotens lässt sich später über
+**„Zuordnung / Datenübergabe ändern"** anpassen (anderes Submodell oder anderes
+Mapping).
+
+**Correctness by Construction dahinter:** Die Verbindung wird **nur gesetzt,
+wenn das resultierende Gesamtmodell konsistent und lauffähig bleibt**. Der Kern
+prüft vor der Übernahme
+
+- **H1** – das Ziel ist freigegeben und auf eine feste Version gepinnt;
+- **H2** – die Zuordnung ist **typkonform**, und eine als **Ergebnis**
+  übernommene Ausgabe muss vom Submodell auf **jedem** Pfad erzeugt werden
+  (sonst wäre das Elternelement danach undefiniert). Übergebene Ergebnisse gelten
+  im Hauptprozess als gesetzt und dürfen nachfolgend gelesen werden (D1);
+- **H3** – die Aufrufhierarchie bleibt **zyklenfrei**;
+- **H4** – die gepinnte Zielversion ist unveränderlich; eine neue Version des
+  Submodells wird nur über eine neue Revision des Hauptprozesses übernommen.
+
+Ist eine dieser Bedingungen verletzt, weist der Kern die Umwandlung ab und nennt
+den betroffenen Regel-Code – am Modell vorbei lässt sich keine inkonsistente
+Verbindung setzen.
+
+---
+
 ## 6. Fortschritt prüfen: Befunde & Revision
 
 In der Modellieren-Sicht zeigt die rechte Spalte laufend:

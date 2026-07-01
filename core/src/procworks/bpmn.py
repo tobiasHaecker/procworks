@@ -34,6 +34,7 @@ from procworks.model import (
     DataAccess,
     DataElement,
     EdgeType,
+    Form,
     Node,
     NodeType,
     ProcessSchema,
@@ -44,6 +45,7 @@ from procworks.validator import SchemaResolver, raise_if_invalid
 _DATA_ELEMENTS = TypeAdapter(list[DataElement])
 _DATA_ACCESSES = TypeAdapter(list[DataAccess])
 _XOR_DECISIONS = TypeAdapter(dict[str, XorDecision])
+_FORMS = TypeAdapter(dict[str, Form])
 
 #: BPMN 2.0 semantic model namespace (OMG / ISO 19510).
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -130,7 +132,12 @@ def _export_procworks_model(process: ET.Element, schema: ProcessSchema) -> None:
     document re-imports to the very same, still-correct schema.
     """
 
-    if not (schema.data_elements or schema.data_accesses or schema.xor_decisions):
+    if not (
+        schema.data_elements
+        or schema.data_accesses
+        or schema.xor_decisions
+        or schema.forms
+    ):
         return
     extensions = ET.SubElement(process, f"{{{BPMN_NS}}}extensionElements")
     payload = {
@@ -139,6 +146,7 @@ def _export_procworks_model(process: ET.Element, schema: ProcessSchema) -> None:
         "xor_decisions": {
             nid: d.model_dump(mode="json") for nid, d in schema.xor_decisions.items()
         },
+        "forms": {nid: f.model_dump(mode="json") for nid, f in schema.forms.items()},
     }
     model = ET.SubElement(extensions, f"{{{PROCWORKS_NS}}}model")
     model.text = json.dumps(payload)
@@ -281,6 +289,7 @@ def import_bpmn(
     }
     data_accesses = _DATA_ACCESSES.validate_python(model.get("data_accesses", []))
     xor_decisions = _XOR_DECISIONS.validate_python(model.get("xor_decisions", {}))
+    forms = _FORMS.validate_python(model.get("forms", {}))
     schema = ProcessSchema(
         id=schema_id or process.get("id") or "imported",
         name=name or process.get("name") or "Imported",
@@ -289,6 +298,7 @@ def import_bpmn(
         data_elements=data_elements,
         data_accesses=data_accesses,
         xor_decisions=xor_decisions,
+        forms=forms,
     )
     return raise_if_invalid(schema, resolver)
 

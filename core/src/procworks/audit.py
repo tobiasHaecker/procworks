@@ -30,6 +30,7 @@ class EventType(StrEnum):
     BRANCH_DECIDED = "BRANCH_DECIDED"
     ADHOC_INSERTED = "ADHOC_INSERTED"
     ADHOC_DELETED = "ADHOC_DELETED"
+    ADHOC_RENAMED = "ADHOC_RENAMED"
     INSTANCE_MIGRATED = "INSTANCE_MIGRATED"
     INSTANCE_COMPLETED = "INSTANCE_COMPLETED"
 
@@ -257,7 +258,12 @@ def compute_kpis(
             running += 1
 
         if any(
-            e.event_type in (EventType.ADHOC_INSERTED, EventType.ADHOC_DELETED)
+            e.event_type
+            in (
+                EventType.ADHOC_INSERTED,
+                EventType.ADHOC_DELETED,
+                EventType.ADHOC_RENAMED,
+            )
             for e in entries
         ):
             adhoc_instances += 1

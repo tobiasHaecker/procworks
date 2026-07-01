@@ -179,6 +179,48 @@ def adhoc_delete_node(
     return result
 
 
+def adhoc_rename_activity(
+    instance: ProcessInstance,
+    schema: ProcessSchema,
+    node_id: str,
+    label: str,
+    *,
+    resolver: SchemaResolver | None = None,
+) -> ProcessInstance:
+    """Relabel a not-yet-reached ACTIVITY/SUBPROCESS in one instance.
+
+    A relabelling is the smallest possible adaptation to reality: it never
+    touches structure, markings or data flow, so it always preserves R2. R1
+    still restricts it to the not-yet-executed region, so the recorded history
+    of already reached steps is never rewritten.
+
+    requires (R1): the node exists, is an ACTIVITY or SUBPROCESS and is still
+                   NOT_ACTIVATED (not yet reached by the execution front).
+    ensures (R2):  the instance schema stays correct; the markings are kept.
+    """
+
+    current = effective_schema(instance, schema)
+    node = current.nodes.get(node_id)
+    if node is None:
+        raise _r1_error(f"node '{node_id}' does not exist", node_id)
+    if node.type not in (NodeType.ACTIVITY, NodeType.SUBPROCESS):
+        raise _r1_error(
+            "only ACTIVITY or SUBPROCESS nodes can be renamed ad-hoc", node_id
+        )
+    if instance.node_states.get(node_id) not in (None, NodeState.NOT_ACTIVATED):
+        raise _r1_error(f"node '{node_id}' is already reached", node_id)
+
+    candidate = current.model_copy(deep=True)
+    candidate.nodes[node_id].label = label
+    candidate.lifecycle_state = LifecycleState.RELEASED
+    raise_if_invalid(candidate, resolver)
+
+    result = instance.model_copy(deep=True)
+    result.ad_hoc_schema = candidate
+    result.ad_hoc_deltas.append(f"rename {node_id} to '{label}'")
+    return result
+
+
 def _free_id(schema: ProcessSchema, prefix: str) -> str:
     i = 1
     while f"{prefix}_{i}" in schema.nodes:

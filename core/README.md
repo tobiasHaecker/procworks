@@ -25,7 +25,10 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   Vorlagen-Schnittstelle: jede Pflicht-Parameter ist gemappt, gemappte Namen
   gehören zur Vorlage, gemappte Datenelemente existieren und sind typgleich);
   Komposition H1-H4 (Sub-Prozesse) und F1-F4 (Folgeprozesse): H1 (Ziel ist
-  RELEASED, gepinnte Version), H2 (typkonformes I/O-Mapping), H3 (azyklische
+  RELEASED, gepinnte Version), H2 (typkonformes I/O-Mapping **und**
+  Datenübergabe-Soundness: ein gemappter Output muss vom Sub-Schema auf jedem
+  Pfad geschrieben werden, und die Output-Zuordnung zählt im Elternprozess als
+  garantierte Schreibung für D1/D2), H3 (azyklische
   Hierarchie), H4 (gepinnte Version immutable), F1 (Zielexistenz/RELEASED), F2
   (typkonformes Handover-Mapping), F3 (Entkopplung ASYNC), F4 (eine
   `CONDITIONAL`-Verkettung hat eine wohlgeformte Bedingung, die nur existierende
@@ -45,6 +48,11 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   registrieren bzw. ein Datenelement als `EXTERNAL` an eine Connector-Entität
   binden),
   `insert_subprocess`/`set_subprocess_mapping` (Sub-Prozess),
+  `convert_activity_to_subprocess` (eine Aktivität in einen an ein Submodell
+  gebundenen `SUBPROCESS` umwandeln), `set_subprocess_binding` (Bindung eines
+  bestehenden Sub-Prozess-Knotens ändern), `set_library_subprocess` (ein
+  freigegebenes Schema als wiederverwendbares Submodell für die Bibliothek
+  markieren),
   `link_follow_up`/`unlink_follow_up` (Folgeprozess),
   `link_org_model`/`unlink_org_model` (geteilte Organisation verknüpfen/lösen),
   `new_revision`
@@ -496,14 +504,28 @@ zul\u00e4ssig (typkonformes Mapping, azyklische Hierarchie):
 POST /schemas/{id}/subprocess
      { "after_node_id": "start", "target_schema_id": "<sub>", "target_version": 1,
        "input_mapping": { "<sub_input>": "<parent_de>" } }
+POST /schemas/{id}/convert-to-subprocess
+     { "node_id": "<activity>", "target_schema_id": "<sub>", "target_version": 1,
+       "input_mapping": { "<sub_input>": "<parent_de>" },
+       "output_mapping": { "<sub_output>": "<parent_de>" } }
+POST /schemas/{id}/subprocess-binding
+     { "node_id": "<subprocess>", "target_schema_id": "<sub>", "target_version": 1,
+       "output_mapping": { "<sub_output>": "<parent_de>" } }
+POST /schemas/{id}/library-flag     { "is_library": true }   -> als Submodell markieren
+GET  /subprocess-library            -> [ { "id", "name", "version", "data_elements": [...] } ]
 POST /schemas/{id}/follow-up
      { "target_schema_id": "<typ>", "mode": "ASYNC",
        "handover_mapping": { "<ziel_start_de>": "<quell_de>" } }
 ```
 
-Verweist ein Sub-Prozess auf ein nicht freigegebenes Ziel (H1), ist ein
-Mapping nicht typkonform (H2/F2) oder w\u00fcrde die Hierarchie zyklisch (H3), wird
-die Operation mit **HTTP 422** abgelehnt.
+Eine **Aktivit\u00e4t** l\u00e4sst sich per `convert-to-subprocess` in einen an ein
+freigegebenes **Submodell** gebundenen `SUBPROCESS` umwandeln; die Bindung eines
+bestehenden Sub-Prozess-Knotens \u00e4ndert `subprocess-binding`. Freigegebene
+Modelle werden per `library-flag` in die \u00fcber `GET /subprocess-library`
+abrufbare **Bibliothek** aufgenommen. Verweist ein Sub-Prozess auf ein nicht
+freigegebenes Ziel (H1), ist ein Mapping nicht typkonform oder erzeugt das
+Submodell einen gemappten Output nicht auf jedem Pfad (H2/F2) oder w\u00fcrde die
+Hierarchie zyklisch (H3), wird die Operation mit **HTTP 422** abgelehnt.
 
 ### Ad-hoc-\u00c4nderungen einer Instanz (R1/R2)
 

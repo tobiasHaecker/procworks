@@ -219,6 +219,73 @@ class DataAccess(BaseModel):
     param_type: DataType | None = None
 
 
+class WidgetKind(StrEnum):
+    """Presentation widget of an input-mask field (form designer).
+
+    The widget only controls how a value is *entered/shown*; the value itself is
+    always a typed :class:`DataElement`. ``widget_matches_type`` keeps the two
+    consistent so a mask can never present a value with an incompatible control.
+    """
+
+    TEXT = "TEXT"
+    TEXTAREA = "TEXTAREA"
+    NUMBER = "NUMBER"
+    DROPDOWN = "DROPDOWN"
+    CHECKBOX = "CHECKBOX"
+    DATE = "DATE"
+
+
+#: Which widgets may present each data type in an input mask. A field whose
+#: widget is not listed for its element's type is rejected by rule U2.
+_WIDGETS_FOR_TYPE: dict[DataType, frozenset[WidgetKind]] = {
+    DataType.STRING: frozenset({WidgetKind.TEXT, WidgetKind.TEXTAREA, WidgetKind.DROPDOWN}),
+    DataType.URI: frozenset({WidgetKind.TEXT}),
+    DataType.INTEGER: frozenset({WidgetKind.NUMBER}),
+    DataType.FLOAT: frozenset({WidgetKind.NUMBER}),
+    DataType.BOOLEAN: frozenset({WidgetKind.CHECKBOX}),
+    DataType.DATE: frozenset({WidgetKind.DATE}),
+}
+
+
+def widget_matches_type(widget: WidgetKind, data_type: DataType) -> bool:
+    """Return whether ``widget`` can present a value of ``data_type`` (rule U2)."""
+
+    return widget in _WIDGETS_FOR_TYPE.get(data_type, frozenset())
+
+
+class FormField(BaseModel):
+    """One control of an input mask, bound to a data element.
+
+    ``mode`` ties the field to the data flow: a ``WRITE`` field is an input that
+    *sets* the element, a ``READ`` field displays a value that must have been
+    *set before* on every path (D1). ``options`` carries the choices of a
+    ``DROPDOWN``. There is no position -- the mask is laid out automatically.
+    """
+
+    id: str
+    element_id: str
+    widget: WidgetKind
+    label: str
+    mode: AccessMode = AccessMode.WRITE
+    required: bool = True
+    options: list[str] = Field(default_factory=list)
+    help_text: str | None = None
+
+
+class Form(BaseModel):
+    """An input mask attached to an ACTIVITY (form designer).
+
+    The mask is a plain, *ordered* list of fields; the concrete arrangement is
+    derived automatically at render time. Every field is a presentation layer
+    over a :class:`DataAccess`, so using a mask stays Correct by Construction
+    (rules U1-U3 keep mask and data flow consistent).
+    """
+
+    node_id: str
+    title: str = ""
+    fields: list[FormField] = Field(default_factory=list)
+
+
 class ConnectorDescriptor(BaseModel):
     """A registered data connector (Section 9.2).
 
@@ -709,6 +776,10 @@ class ProcessSchema(BaseModel):
     xor_decisions: dict[str, XorDecision] = Field(default_factory=dict)
     data_elements: dict[str, DataElement] = Field(default_factory=dict)
     data_accesses: list[DataAccess] = Field(default_factory=list)
+    #: Optional input mask per ACTIVITY node id (form designer). A mask is a
+    #: presentation layer over ``data_accesses``; rules U1-U3 keep the two
+    #: consistent so masks stay Correct by Construction (kein Read ohne Set).
+    forms: dict[str, Form] = Field(default_factory=dict)
     connectors: dict[str, ConnectorDescriptor] = Field(default_factory=dict)
     org_model: OrgModel = Field(default_factory=OrgModel)
     #: When set, the schema uses a shared, standalone org model (resolved from
@@ -729,6 +800,10 @@ class ProcessSchema(BaseModel):
     time_constraints: dict[str, TimeConstraint] = Field(default_factory=dict)
     #: Optional hard deadline of the whole process in seconds (roadmap E5).
     deadline_seconds: float | None = None
+    #: Marks this schema as a reusable sub-process ("sub-model"): once RELEASED
+    #: it is offered in the sub-process library for binding into other schemas'
+    #: SUBPROCESS nodes. Purely a catalogue flag -- it never affects validation.
+    is_library_subprocess: bool = False
 
     # --- read helpers -----------------------------------------------------
 

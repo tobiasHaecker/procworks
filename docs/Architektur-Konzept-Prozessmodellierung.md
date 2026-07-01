@@ -250,9 +250,12 @@ Sub- und Folgeprozesse (Abschnitt 4.2) sind ebenfalls **Correctness by Construct
 **Sub-Prozesse (hierarchisch):**
 
 - **H1 – Referenz auf freigegebenes Schema:** Ein `SUBPROCESS`-Knoten darf nur auf ein **RELEASED** Zielschema mit **fester (gepinnter) Version** verweisen. Ein Entwurf darf zwar referenziert werden, blockiert aber das Release des Elternschemas (Stufe B).
-- **H2 – Schnittstellenkonformität:** Das Input-/Output-Mapping ist **typkonform** (analog D3). Jeder Pflicht-Input des Sub-Prozesses ist aus einem geschriebenen Datenelement des Hauptprozesses versorgt; jeder genutzte Output ist auf ein Datenelement des Hauptprozesses gemappt.
+- **H2 – Schnittstellen- und Datenübergabe-Konformität:** Das Input-/Output-Mapping ist **typkonform** (analog D3). Jeder Pflicht-Input des Sub-Prozesses ist aus einem geschriebenen Datenelement des Hauptprozesses versorgt; jeder genutzte Output ist auf ein Datenelement des Hauptprozesses gemappt. **Erzeugungsgarantie der Ausgabe:** Ein Output darf nur gemappt werden, wenn das Sub-Schema das entsprechende Zielelement auf **jedem** Pfad bis zu seinem Ende schreibt – andernfalls wäre das rückgeschriebene Elternelement nach dem Sub-Prozess undefiniert und der Datenfluss nicht lauffähig. Umgekehrt zählt die Ergebnis-Zuordnung (Output-Mapping) im Elternprozess als **garantierte Schreibung** des `SUBPROCESS`-Knotens: Die so übergebenen Daten stehen damit dem Datenfluss (D1 „kein Read ohne Set", D2 keine konkurrierenden Schreibungen) genauso zur Verfügung wie eine reguläre Aktivitätsschreibung. Damit ist die **Datenübergabe** durchgängig Teil der Correctness by Construction.
 - **H3 – Azyklische Hierarchie:** Die transitive Sub-Prozess-Referenzierung ist **zyklenfrei** (ein Prozess kann sich weder direkt noch indirekt selbst enthalten). Der Validator prüft den Aufrufgraphen vor dem Commit.
 - **H4 – Versions-Stabilität & Evolution:** Die gepinnte Zielversion ist **immutable**. Erscheint eine neue Version des Sub-Schemas, bleibt das freigegebene Elternschema unberührt; eine Übernahme erfolgt nur über eine **neue Revision** des Elternschemas (Migration M1–M5 gilt analog über die Hierarchiegrenze).
+
+**Wiederverwendung & Submodell-Bibliothek:** Ein eigenständig entwickeltes, freigegebenes Schema kann als **Submodell** markiert werden (`is_library_subprocess`) und steht damit in einer **Bibliothek** (`GET /subprocess-library`) zur Wiederverwendung bereit. Eine bestehende **Aktivität lässt sich in einen `SUBPROCESS` umwandeln** (`convert_activity_to_subprocess`), der an ein solches Submodell bindet; die Bindung eines bestehenden Sub-Prozess-Knotens ist nachträglich änderbar (`set_subprocess_binding`). Die Verbindung wird **nur dann gesetzt, wenn das resultierende Gesamtmodell konsistent und lauffähig bleibt** – d. h. alle Regeln H1–H4 (samt Datenübergabe) und die vollständige Schema-Validierung greifen als Commit-Vorbedingung; andernfalls wird die Umwandlung abgelehnt. Das Bibliotheks-Flag ist reine Katalog-Metadaten und beeinflusst die Validierung nie; bindbar wird ein Submodell erst nach seiner Freigabe (H1).
+
 
 **Folgeprozesse (modular/lateral):**
 
@@ -316,6 +319,7 @@ classDiagram
       +id
       +version
       +lifecycleState  // ENTWURF, REVIEW, RELEASED, DEPRECATED, ARCHIVED
+      +isLibrarySubprocess  // als wiederverwendbares Submodell markiert
       +rootBlock
     }
     class Node {
@@ -357,7 +361,7 @@ classDiagram
       +targetType
       +targetVersion  // gepinnt (immutable Referenz)
       +inputMapping   // Eltern-DE -> Sub-Input
-      +outputMapping  // Sub-Output -> Eltern-DE
+      +outputMapping  // Sub-Output -> Eltern-DE (garantierte Schreibung, H2)
     }
     class FollowUpLink {
       +fromSchema
