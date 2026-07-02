@@ -44,3 +44,18 @@ Thumbs.db
 # FTO-/Patentanalysen, Strategie-Notizen). Bleibt ausschließlich lokal.
 private/
 
+# Werbe-Website (procworks.de): wird separat und manuell auf einem Webserver
+# bereitgestellt und bewusst NICHT im öffentlichen Repository geführt.
+/site/
+
+# Reine Entwicklungs-/Projektinterna – das öffentliche Repository ist zugleich der
+# Download-Ort für Testnutzer und Kunden, daher bleiben ausschließlich
+# kundenrelevante Inhalte sichtbar. Diese Dateien (Marketing/SEO, Veröffentlichungs-
+# prozess, Entwickler-Werkzeuge, lokale Editor-Konfiguration, Test-/Smoke-Artefakte)
+# bleiben ausschließlich lokal.
+*.db
+/tools/
+/ProcWorks.code-workspace
+/docs/Marketing-Konzept.md
+/docs/GitHub-Veroeffentlichung.md
+

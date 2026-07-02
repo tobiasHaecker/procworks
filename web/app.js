@@ -242,6 +242,14 @@ function setConnected(ok) {
   pill.className = "pill " + (ok ? "pill-green" : "pill-gray");
 }
 
+// Show the running software version (reported by the API's /health endpoint,
+// which reads it from the installed package -- the single source of truth).
+function showVersion(version) {
+  const el = byId("app-version");
+  if (!el) return;
+  el.textContent = version ? `ProcWorks v${version}` : "ProcWorks";
+}
+
 // --------------------------------------------------------------------------
 // Modal
 // --------------------------------------------------------------------------
@@ -4023,8 +4031,9 @@ function wireNav() {
 
 async function boot() {
   try {
-    await api.get("/health");
+    const health = await api.get("/health");
     setConnected(true);
+    showVersion(health && health.version);
     await loadAuthConfig();
     // In password mode an unauthenticated visitor must log in first; the rest
     // of the app stays hidden behind the overlay until /auth/me succeeds.

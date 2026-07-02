@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import procworks
 from procworks.api import app
 
 client = TestClient(app)
@@ -13,7 +14,16 @@ client = TestClient(app)
 def test_health() -> None:
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    assert body["status"] == "ok"
+    # The API reports the installed package version (single source of truth).
+    assert body["version"] == procworks.__version__
+    assert body["version"] and body["version"] != "0.0.0+unknown"
+
+
+def test_openapi_reports_package_version() -> None:
+    # The OpenAPI schema version tracks the package, not a hard-coded string.
+    assert app.version == procworks.__version__
 
 
 def test_create_and_build_schema_via_api() -> None:

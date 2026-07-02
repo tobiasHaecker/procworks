@@ -54,13 +54,6 @@ Hintergrund/Design: [Integrations-Konzept-Externe-Anbindung.md](Integrations-Kon
 | [Mitarbeiter-Anleitung.md](Mitarbeiter-Anleitung.md) | Anleitung für Sachbearbeiter (zum Weitergeben) |
 | [Modellierer-Anleitung.md](Modellierer-Anleitung.md) | Anleitung für Modellierer |
 
-## Projekt & Veröffentlichung
-
-| Dokument | Inhalt |
-|----------|--------|
-| [Marketing-Konzept.md](Marketing-Konzept.md) | Vermarktung, SEO, Domain procworks.de |
-| [GitHub-Veroeffentlichung.md](GitHub-Veroeffentlichung.md) | Anleitung zur Veröffentlichung auf GitHub |
-
 ## Im Repository-Stamm
 
 - [README.md](../README.md) – Projektüberblick und Schnellstart

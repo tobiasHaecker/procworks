@@ -320,17 +320,21 @@ diese Provisionierung auslöst und das Initialpasswort einmalig anzeigt. Details
 ## Web-Client starten
 
 Der Web-Client unter [`../web/`](../web/) ist ein reiner No-Build-Client und
-braucht keinen Bundler. Bei laufender API gen\u00fcgt ein statischer Server:
+braucht keinen Bundler. Bei laufender API genügt ein statischer Server:
 
 ```powershell
 # in einem zweiten Terminal, im Repo-Wurzelverzeichnis
 .venv\Scripts\python.exe -m http.server 5500 --directory web
 ```
 
-Danach <http://127.0.0.1:5500> \u00f6ffnen. Die API-Basis (Standard
-`http://127.0.0.1:8000`) l\u00e4sst sich unten links anpassen; der Status zeigt
-`verbunden`, sobald `/health` erreichbar ist. Alternativ l\u00e4sst sich
-`web/index.html` direkt \u00f6ffnen (die CORS-Middleware erlaubt den Zugriff).
+Danach <http://127.0.0.1:5500> öffnen. Die API-Basis (Standard
+`http://127.0.0.1:8000`) lässt sich unten links anpassen; der Status zeigt
+`verbunden`, sobald `/health` erreichbar ist, und darunter die vom Kern
+gemeldete **Softwareversion**. Diese stammt aus einer einzigen Quelle – den
+Paket-Metadaten (`procworks.__version__`, gepflegt in `pyproject.toml` bzw. dem
+Release-Tag): `/health` liefert sie mit (`{"status":"ok","version":…}`) und die
+OpenAPI-Beschreibung trägt sie ebenfalls. Alternativ lässt sich
+`web/index.html` direkt öffnen (die CORS-Middleware erlaubt den Zugriff).
 
 ### Beispiel-Ablauf (headless)
 
@@ -375,8 +379,8 @@ POST /schemas/{id}/service          { "node_id": "<act>", "name": "Pruefen", "te
 ```
 
 Eine Bearbeiterregel (BZR) ist ein strukturierter Ausdrucksbaum
-(`ROLE`/`ORG_UNIT`/`NODE_PERFORMING_AGENT` als Bl\u00e4tter, `AND`/`OR`/`EXCEPT` als
-Verkn\u00fcpfungen). Verweise auf unbekannte Org-Elemente (Z1), nicht aufl\u00f6sbare
+(`ROLE`/`ORG_UNIT`/`NODE_PERFORMING_AGENT` als Blätter, `AND`/`OR`/`EXCEPT` als
+Verknüpfungen). Verweise auf unbekannte Org-Elemente (Z1), nicht auflösbare
 Regeln (Z2) oder Rückbezüge auf nicht garantiert vorher ausgeführte Schritte
 (Z3) werden mit **HTTP 422** abgelehnt. Eine `ORG_UNIT`-Regel kann über
 `recursive: true` die Abteilung samt aller untergeordneten Bereiche adressieren.
@@ -499,9 +503,9 @@ Eine ungültige Operation (z. B. Einfügen nach `end`) wird mit **HTTP 422** und
 lokalisierten `findings` abgelehnt — der Validierungspfad lässt sich nicht
 umgehen.
 
-### Ausf\u00fchrung (Execution Engine)
+### Ausführung (Execution Engine)
 
-Ein freigegebenes Schema wird instanziiert und \u00fcber die Worklist abgearbeitet:
+Ein freigegebenes Schema wird instanziiert und über die Worklist abgearbeitet:
 
 ```text
 POST /schemas/{id}/instances        -> ProcessInstance (state RUNNING, Markierungen gesetzt)
@@ -543,7 +547,7 @@ pro angemeldeter Person.
 
 Ein Schema kann ein anderes als **Sub-Prozess** einbetten oder als
 **Folgeprozess** verketten. Beides ist nur gegen ein **freigegebenes** Ziel
-zul\u00e4ssig (typkonformes Mapping, azyklische Hierarchie):
+zulässig (typkonformes Mapping, azyklische Hierarchie):
 
 ```text
 POST /schemas/{id}/subprocess
@@ -563,35 +567,35 @@ POST /schemas/{id}/follow-up
        "handover_mapping": { "<ziel_start_de>": "<quell_de>" } }
 ```
 
-Eine **Aktivit\u00e4t** l\u00e4sst sich per `convert-to-subprocess` in einen an ein
+Eine **Aktivität** lässt sich per `convert-to-subprocess` in einen an ein
 freigegebenes **Submodell** gebundenen `SUBPROCESS` umwandeln; die Bindung eines
-bestehenden Sub-Prozess-Knotens \u00e4ndert `subprocess-binding`. Freigegebene
-Modelle werden per `library-flag` in die \u00fcber `GET /subprocess-library`
+bestehenden Sub-Prozess-Knotens ändert `subprocess-binding`. Freigegebene
+Modelle werden per `library-flag` in die über `GET /subprocess-library`
 abrufbare **Bibliothek** aufgenommen. Verweist ein Sub-Prozess auf ein nicht
 freigegebenes Ziel (H1), ist ein Mapping nicht typkonform oder erzeugt das
-Submodell einen gemappten Output nicht auf jedem Pfad (H2/F2) oder w\u00fcrde die
+Submodell einen gemappten Output nicht auf jedem Pfad (H2/F2) oder würde die
 Hierarchie zyklisch (H3), wird die Operation mit **HTTP 422** abgelehnt.
 
-### Ad-hoc-\u00c4nderungen einer Instanz (R1/R2)
+### Ad-hoc-Änderungen einer Instanz (R1/R2)
 
-Eine **einzelne** laufende Instanz l\u00e4sst sich an die Realit\u00e4t anpassen, ohne
-das freigegebene Schema zu \u00e4ndern. Die Instanz erh\u00e4lt eine eigene Variante
-(`ad_hoc_schema`); die Engine l\u00e4uft nahtlos dagegen weiter:
+Eine **einzelne** laufende Instanz lässt sich an die Realität anpassen, ohne
+das freigegebene Schema zu ändern. Die Instanz erhält eine eigene Variante
+(`ad_hoc_schema`); die Engine läuft nahtlos dagegen weiter:
 
 ```text
 POST /instances/{id}/adhoc/insert  { "after_node_id": "<knoten>", "label": "Zusatzschritt" }
 POST /instances/{id}/adhoc/delete  { "node_id": "<knoten>" }
 ```
 
-Erlaubt ist nur die noch nicht ausgef\u00fchrte Region (R1: ein bereits
-laufender/abgeschlossener/\u00fcbersprungener Knoten ist eingefroren); die
+Erlaubt ist nur die noch nicht ausgeführte Region (R1: ein bereits
+laufender/abgeschlossener/übersprungener Knoten ist eingefroren); die
 resultierende Variante wird vor dem Commit voll validiert (R2). Verletzungen
 werden mit **HTTP 422** abgelehnt.
 
-### Schema-Evolution + Instanzmigration (M1\u2013M5)
+### Schema-Evolution + Instanzmigration (M1–M5)
 
-Eine neue Revision (`POST /schemas/{id}/revision`) beh\u00e4lt alle Element-IDs,
-sodass laufende Instanzen umziehen k\u00f6nnen \u2014 sofern die ausgef\u00fchrte Region
+Eine neue Revision (`POST /schemas/{id}/revision`) behält alle Element-IDs,
+sodass laufende Instanzen umziehen können — sofern die ausgeführte Region
 erhalten bleibt:
 
 ```text
@@ -602,15 +606,15 @@ POST /instances/{id}/migrate               { "target_schema_id": "<rev>",
 ```
 
 `migration-check` liefert `{ migratable, findings }` (M1 Ziel korrekt+RELEASED,
-M2 ausgef\u00fchrte Region unver\u00e4ndert, M3 saubere Markierungsabbildung, M4
-Pflichtdaten verf\u00fcgbar, M5 keine ad-hoc \u00c4nderungen). `migrate` zieht die
+M2 ausgeführte Region unverändert, M3 saubere Markierungsabbildung, M4
+Pflichtdaten verfügbar, M5 keine ad-hoc Änderungen). `migrate` zieht die
 Instanz atomar um (Markierungen werden umgesetzt, neue Knoten starten
 unmarkiert) oder lehnt mit **HTTP 422 + Befund** ab.
 
 ### Monitoring/Audit + Process Mining
 
 Jede Laufzeitoperation wird **an der API-Grenze** in ein append-only Event-Log
-geschrieben (der Ausf\u00fchrungskern bleibt rein und kennt das Log nicht). Aus der
+geschrieben (der Ausführungskern bleibt rein und kennt das Log nicht). Aus der
 Historie liest die API drei Auswertungen:
 
 ```text
@@ -625,9 +629,9 @@ GET  /monitoring/revision                -> { revision }   # monotoner Zähler f
 Erfasste Ereignisse sind `INSTANCE_CREATED`, `ACTIVITY_STARTED`,
 `ACTIVITY_COMPLETED`, `BRANCH_DECIDED`, `ADHOC_INSERTED`, `ADHOC_DELETED`,
 `INSTANCE_MIGRATED`, `INSTANCE_COMPLETED` (je mit Zeitstempel, Knoten/Label und
-ggf. Bearbeiter). `kpis` liefert Durchlaufzeit (Ø) und je Aktivit\u00e4t
-Abschl\u00fcsse + Ø Bearbeitungszeit als Engpass-Signal; `process-map` ist ein aus
-den realen Abl\u00e4ufen entdeckter **Directly-follows-Graph** (leichtes Process
+ggf. Bearbeiter). `kpis` liefert Durchlaufzeit (Ø) und je Aktivität
+Abschlüsse + Ø Bearbeitungszeit als Engpass-Signal; `process-map` ist ein aus
+den realen Abläufen entdeckter **Directly-follows-Graph** (leichtes Process
 Mining). Der Web-Client zeigt all das in der Sicht **Monitoring** (KPI-Kacheln,
 Engpass-Tabelle, Prozesskarte) und blendet pro Instanz einen **Audit-Verlauf**
 ein. Ohne `DATABASE_URL` liegt das Log in-memory; mit `DATABASE_URL` wird jedes
@@ -673,6 +677,22 @@ werden** (Schreiben-vor-Lesen, D1):
 Die abgeschlossene Instanz `urlaub-2026-003` trägt entsprechend reale Werte
 (`tage=20`, `entscheidung="Abgelehnt: …"`), die über die Aktivitäten
 weitergereicht wurden.
+
+Damit **jede Sicht** ab dem ersten Start etwas anzeigt, demonstriert der
+Datensatz nahezu den gesamten Funktionsumfang:
+
+- **Eingabemasken** (Formular-Designer): *Antrag erfassen* (Zahlenfeld +
+  optionales Textfeld) und *Budget prüfen* (Checkbox).
+- **Wertschöpfungsklassen** (alle drei), **Arbeitslisten-Priorität** und die
+  **Zeitperspektive** (Soll-Dauern je Schritt + Prozessfrist) im Urlaubsprozess.
+- **Integration** im Beschaffungs-Entwurf: ein **Daten-Connector** (`erp`) mit
+  **CbC-sicherer skalarer SQL-Anbindung** (Kreditlimit aus dem ERP per
+  Lieferantennummer) und ein **automatisierter External-Task-Schritt** (*Angebote
+  einholen*).
+- **Strukturierte Bearbeiterregeln** (BZR): eine Organisationseinheit-Regel und
+  ein ODER-Kombinator statt reiner Rollen-Blätter.
+- Eine **zweistufige Organisationshierarchie** (Geschäftsleitung über Vertrieb und
+  Einkauf) für ein echtes Organigramm.
 
 `load_demo(*, schema_store, instance_store, org_store, audit_log, password_backend=None)`
 befüllt die Stores idempotent und erzeugt dabei echte Audit-Events (die Instanzen

@@ -213,7 +213,7 @@ Kompositionsregeln H1-H4/F1-F4.
 - **Beispieldaten & Reset (nur Administrator)**: ein eingebauter Demo-Datensatz (`demo.py`) macht alle Funktionen sofort greifbar — eine geteilte Organisation, ein **freigegebener** Prozess „Urlaubsantrag" und ein **Entwurf** „Beschaffung", dazu **drei Instanzen** an unterschiedlichen Punkten (eine frisch gestartet, eine in der Genehmigung, eine abgeschlossen) inklusive Audit-Verlauf und KPIs. Über `POST /admin/reset` setzt **ausschließlich** die Rolle `admin` das System **auf Null** zurück (Schemata, Instanzen, Organisationsmodelle, im Login-Betrieb auch alle Nutzer) und lädt die Beispieldaten optional wieder (`{"load_demo": true}`). Die handelnde Administrator-Identität und das Bootstrap-Konto `admin` bleiben dabei erhalten (kein Aussperren). Im Web-Client steht das als Bereich **„Wartung (Administrator)"** in der Monitoring-Sicht; die Testbenutzer-Logins sind im Schnellstart dokumentiert.
 - **Modellanalyse, Priorität & Zeit (additiv, konzeptgetrieben)**: lesende **Modellmetriken & 7PMG-Hinweise** (`metrics.py`, `GET /schemas/{id}/metrics`: Größe, Verschachtelungstiefe, Gateway-Heterogenität, Konnektorgrad — nicht-blockierend, ohne Einfluss auf die Korrektheit), optionale **Wertschöpfungs-Klassifikation** je Knoten (`set_value_class`), **Arbeitslisten-Priorität** = Auswirkung + Dringlichkeit mit Sortierung der offenen Aufgaben (`set_node_priority`, `OpenTask.priority`) und eine statische **Zeitperspektive T1/T2** (Dauer-/Fristfelder; der kritische Pfad muss die Frist einhalten — als eigene, nur bei vorhandenen Zeitangaben greifende Validierungsgruppe, `set_time_constraint`/`set_deadline`). Die KPI-Auswertung trägt zusätzlich eine **Flexibilitäts-Kennzahl** (Ad-hoc-Anteil); Kosten/Qualität bleiben bewusst offen.
 - **Deployment** (`core/Dockerfile`, `web/Dockerfile`, [deploy/](deploy/)): zustandsloses API-Container-Image (Migrationen beim Start, dann Uvicorn, non-root) plus Web/SPA hinter **Caddy** als Reverse Proxy mit automatischem TLS (Let's Encrypt), das `/api/*` an die API routet. Voller lokaler Stack via [deploy/docker-compose.full.yml](deploy/docker-compose.full.yml) (PostgreSQL + API + Web), Produktion via **Helm-Chart** ([deploy/helm/](deploy/helm/)). Der gebündelte Produktions-Stack (Compose/Helm) aktiviert standardmäßig das **Passwort-Login** (`PROCWORKS_AUTH=password`); beim ersten Start eines leeren Stores wird automatisch ein `admin`-Konto mit zufälligem Einmal-Passwort angelegt und ins API-Log geschrieben (erzwungener Wechsel beim ersten Login). **CI/CD**: GitHub Actions baut beide Images, scannt sie mit **Trivy** und veröffentlicht sie bei einem Versions-Tag nach **ghcr.io**. Erstinstallation auf einem Windows Server: [docs/Windows-Server-Setup.md](docs/Windows-Server-Setup.md). Anleitung für Mitarbeiter (Anmelden + Aufgaben bearbeiten): [docs/Mitarbeiter-Anleitung.md](docs/Mitarbeiter-Anleitung.md).
-- 600 Tests (pytest), `ruff` + `mypy --strict` grün.
+- 604 Tests (pytest), `ruff` + `mypy --strict` grün.
 
 ```powershell
 cd core
@@ -289,12 +289,6 @@ Implementierung. Es übernimmt aus der Forschung **nur Konzepte**, keinen Code:
   extrahierte Volltexte werden nie eingecheckt (per `.gitignore` ausgeschlossen).
 - **Drittlizenzen dokumentiert.** Alle Abhängigkeiten und ihre Lizenzen sind in
   [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) aufgeführt.
-
-## Veröffentlichung
-
-Eine vollständige Schritt-für-Schritt-Anleitung zum Publizieren dieses Projekts
-auf GitHub (inkl. CI, Branch-Schutz, GitHub Pages und Releases) liegt unter
-[docs/GitHub-Veroeffentlichung.md](docs/GitHub-Veroeffentlichung.md).
 
 ## Lizenz
 

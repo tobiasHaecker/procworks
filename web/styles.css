@@ -344,6 +344,7 @@ svg.graph { display: block; min-width: 100%; user-select: none; transform-origin
 .auth-card .auth-err { font-size: 13px; color: var(--red); min-height: 1em; }
 .auth-card .auth-disclaimer { font-size: 11px; color: var(--txt-dim); line-height: 1.5; margin: 4px 0 0; }
 .side-foot .disclaimer-foot { font-size: 10px; opacity: .85; }
+.side-foot .app-version { font-size: 10px; opacity: .7; letter-spacing: .02em; }
 
 /* ---- Integration view ---- */
 .sub-h { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }

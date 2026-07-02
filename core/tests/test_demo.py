@@ -25,7 +25,16 @@ from procworks.auth_password import (
     hash_password,
 )
 from procworks.execution import ExecutionContext
-from procworks.model import AccessMode, DataType, InstanceState, LifecycleState
+from procworks.model import (
+    AccessMode,
+    AutomationKind,
+    DataSourceKind,
+    DataType,
+    InstanceState,
+    LifecycleState,
+    StaffRuleKind,
+    ValueClass,
+)
 from procworks.store import (
     InMemoryInstanceStore,
     InMemoryOrgStore,
@@ -184,6 +193,77 @@ def test_demo_beschaffung_wires_parallel_data_objects() -> None:
     assert budget in _accessors(besch, "budget_ok", AccessMode.WRITE)
     assert freigeben in _accessors(besch, "betrag", AccessMode.READ)
     assert freigeben in _accessors(besch, "budget_ok", AccessMode.READ)
+
+
+def test_demo_urlaub_showcases_mask_valueclass_priority_and_time() -> None:
+    # The released schema demonstrates the presentation/analytical features so
+    # every view (mask designer, value breakdown, worklist priority, time) has
+    # something to show.
+    ss, ins, orgs, log = _fresh_stores()
+    demo.load_demo(schema_store=ss, instance_store=ins, org_store=orgs, audit_log=log)
+    urlaub = ss.get(demo.SCHEMA_URLAUB)
+    assert urlaub is not None
+
+    erfassen = _node_id(urlaub, "Antrag erfassen")
+    # Input mask (form designer) with a number field and an optional text area.
+    mask = urlaub.forms.get(erfassen)
+    assert mask is not None
+    assert {f.element_id for f in mask.fields} == {"tage", "grund"}
+
+    # All three value classes appear, a priority is set and the temporal
+    # perspective is populated (per-step durations + a process deadline).
+    classes = {n.value_class for n in urlaub.nodes.values() if n.value_class is not None}
+    assert classes == {
+        ValueClass.VALUE_ADDING,
+        ValueClass.BUSINESS_NECESSARY,
+        ValueClass.NON_VALUE_ADDING,
+    }
+    assert urlaub.node_priorities  # at least one prioritised step
+    assert urlaub.time_constraints  # per-step target durations
+    assert urlaub.deadline_seconds is not None
+
+
+def test_demo_beschaffung_showcases_connector_automation_and_staff_rules() -> None:
+    # The draft schema demonstrates the advanced/integration features: a
+    # connector with a CbC-safe scalar SQL binding, an automated external-task
+    # step and structured staff rules (org-unit + OR combinator).
+    ss, ins, orgs, log = _fresh_stores()
+    demo.load_demo(schema_store=ss, instance_store=ins, org_store=orgs, audit_log=log)
+    besch = ss.get(demo.SCHEMA_BESCHAFFUNG)
+    assert besch is not None
+
+    # Connector + scalar SQL-bound EXTERNAL element (C1/C4-C6).
+    assert "erp" in besch.connectors
+    kreditlimit = besch.data_elements["kreditlimit"]
+    assert kreditlimit.source is DataSourceKind.EXTERNAL
+    assert kreditlimit.select is not None
+    assert kreditlimit.select.connector_id == "erp"
+
+    # Automated external-task step (E11) on the offer activity.
+    angebote = _node_id(besch, "Angebote einholen")
+    binding = besch.service_bindings.get(angebote)
+    assert binding is not None
+    assert binding.automatic is True
+    assert binding.automation is AutomationKind.EXTERNAL_TASK
+
+    # Structured staff rules: an org-unit leaf and an OR combinator.
+    budget = _node_id(besch, "Budget pr\u00fcfen")
+    freigeben = _node_id(besch, "Bestellung freigeben")
+    assert besch.staff_rules[budget].kind is StaffRuleKind.ORG_UNIT
+    assert besch.staff_rules[freigeben].kind is StaffRuleKind.OR
+
+
+def test_demo_org_has_two_level_hierarchy() -> None:
+    # The shared org forms a real tree (management over sales and purchasing) so
+    # the org chart shows more than a flat list.
+    ss, ins, orgs, log = _fresh_stores()
+    demo.load_demo(schema_store=ss, instance_store=ins, org_store=orgs, audit_log=log)
+    org = orgs.get(demo.ORG_ID)
+    assert org is not None
+
+    assert org.org_units["vertrieb"].parent_id == "leitung"
+    assert org.org_units["einkauf-abt"].parent_id == "leitung"
+    assert org.org_units["leitung"].manager_id == "a-sabine"
 
 
 # --- store clear ----------------------------------------------------------

@@ -7,6 +7,9 @@ correctness rules (K1-K3) *before* committing. There is no API to build an
 arbitrary, unstructured graph.
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _package_version
+
 from procworks.adhoc import (
     adhoc_delete_node,
     adhoc_insert_activity,
@@ -252,6 +255,16 @@ from procworks.store import (
     make_org_resolver,
 )
 from procworks.validator import CorrectnessError, ValidationFinding, validate
+
+try:
+    #: The installed package version -- the single source of truth for the
+    #: software version, kept in ``pyproject.toml`` and bumped to match the
+    #: released Git tag (e.g. ``v0.2.0``). Surfaced by the API (``/health``,
+    #: OpenAPI) and the web client so the running system always reports the
+    #: version it was released as.
+    __version__ = _package_version("procworks")
+except PackageNotFoundError:  # pragma: no cover - source checkout without install
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "ALL_ROLES",

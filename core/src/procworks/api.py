@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from procworks import adhoc, assignment, demo, metrics, migration
+from procworks import __version__, adhoc, assignment, demo, metrics, migration
 from procworks import bpmn as bpmn_io
 from procworks import execution as exe
 from procworks import operations as ops
@@ -114,7 +114,7 @@ from procworks.validator import CorrectnessError, ValidationFinding, validate
 
 app = FastAPI(
     title="Process-Core API",
-    version="0.1.0",
+    version=__version__,
     summary="Headless, block-structured process engine kernel (Correctness by Construction).",
 )
 
@@ -958,7 +958,7 @@ def _commit_instance_or_422(result_fn: object) -> ProcessInstance:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": __version__}
 
 
 @app.get("/auth/me", response_model=Principal)

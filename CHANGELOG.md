@@ -8,7 +8,44 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
+## [0.3.0] - 2026-07-02
+
+### Entfernt
+- **Quellen der Werbe-Website (`site/`) aus dem Repository genommen.** Die
+  Landingpage samt Impressum/Datenschutz wird separat und manuell auf einem
+  Webserver bereitgestellt und ist daher nicht mehr Teil des öffentlichen
+  Repositories (per `.gitignore` ausgeschlossen). Der Kern, der Web-Client und
+  das Deployment von API/Web (Compose/Helm) sind davon unberührt.
+- **Entwicklungs-/Projektinterna aus dem öffentlichen Repository entfernt.** Da
+  das Repository zugleich der Download-Ort für Testnutzer und Kunden ist, sind
+  dort ausschließlich kundenrelevante Inhalte sichtbar. Rein interne Unterlagen
+  – Marketing-/SEO-Konzept, die GitHub-Veröffentlichungsanleitung, das Entwickler-
+  Werkzeug `tools/extract_pdf.py`, die VS-Code-Arbeitsbereichsdatei sowie ein
+  versehentlich eingechecktes Smoke-Test-Artefakt (`core/smoke_audit.db`) – wurden
+  aus der Versionierung genommen und per `.gitignore` ausgeschlossen; sie bleiben
+  lokal erhalten.
+
 ### Hinzugefügt
+- **Sichtbare Software-Version:** Die laufende Version wird jetzt aus den
+  Paket-Metadaten (`procworks.__version__`, Quelle `pyproject.toml` bzw. der
+  Release-Tag) abgeleitet und nur noch an einer Stelle gepflegt. Die API meldet
+  sie über `/health` (`{"status":"ok","version":…}`) und in der
+  OpenAPI-Beschreibung; der Web-Client zeigt sie in der Seitenleiste. Zuvor war
+  die API-Version fest auf „0.1.0" verdrahtet.
+- **Vollständigere Beispieldaten (Demo):** Die eingebauten Beispieldaten zeigen
+  jetzt nahezu den gesamten Funktionsumfang, sodass jede Sicht ab dem ersten
+  Start etwas anzeigt. Neu im Datensatz: eine **Eingabemaske** (Formular-Designer)
+  auf „Antrag erfassen" (Zahlenfeld + optionales Textfeld) und auf „Budget
+  prüfen" (Checkbox); **Wertschöpfungsklassen** (alle drei Klassen), eine
+  **Arbeitslisten-Priorität** und die **Zeitperspektive** (Soll-Dauern je Schritt
+  + Prozessfrist) im Urlaubsprozess; im Beschaffungs-Entwurf zusätzlich ein
+  **Daten-Connector** mit **CbC-sicherer skalarer SQL-Anbindung** (Kreditlimit
+  aus dem ERP per Lieferantennummer), ein **automatisierter External-Task-Schritt**
+  („Angebote einholen"), **strukturierte Bearbeiterregeln** (Organisationseinheit
+  und ODER-Kombinator) sowie eine **zweistufige Organisationshierarchie**
+  (Geschäftsleitung über Vertrieb und Einkauf) für ein echtes Organigramm. Alles
+  wird ausschließlich über die geprüften öffentlichen Operationen aufgebaut
+  (validate-before-commit) und bleibt damit Correct by Construction.
 - **CbC-sichere SQL-Datenanbindung – Fundament (Konzept + Q0–Q2):** Ein neues
   Konzept [docs/SQL-Datenanbindung-Konzept.md](docs/SQL-Datenanbindung-Konzept.md)
   beschreibt, wie Datenelemente **intuitiv per SQL-`SELECT`** an externe
@@ -661,6 +698,7 @@ ein schließbares Hinweis-Banner („Hervorhebung löschen“). Ein Wechsel übe
 - Community-Dateien: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`.
 - Issue-/Pull-Request-Templates und `CODEOWNERS`.
 
-[Unveröffentlicht]: https://github.com/tobiasHaecker/procworks/compare/v0.2.0...HEAD
+[Unveröffentlicht]: https://github.com/tobiasHaecker/procworks/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tobiasHaecker/procworks/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tobiasHaecker/procworks/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tobiasHaecker/procworks/releases/tag/v0.1.0

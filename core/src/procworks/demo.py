@@ -27,14 +27,24 @@ from procworks.auth_password import (
 )
 from procworks.model import (
     AccessMode,
+    AutomationKind,
+    Cardinality,
+    ConnectorKind,
     DataType,
+    FilterOperator,
+    ImpactUrgency,
     InstanceState,
     NodeType,
     OrgModel,
     ProcessInstance,
     ProcessSchema,
+    QueryFilter,
     StaffRule,
     StaffRuleKind,
+    TimeConstraint,
+    ValueClass,
+    WidgetKind,
+    WorkItemPriority,
 )
 from procworks.store import (
     InstanceStore,
@@ -90,8 +100,12 @@ def _build_org() -> OrgModel:
     org = org_ops.org_add_role(org, "Sachbearbeiter", role_id="sachbearbeiter")
     org = org_ops.org_add_role(org, "Teamleitung", role_id="teamleitung")
     org = org_ops.org_add_role(org, "Einkauf", role_id="einkauf")
+    org = org_ops.org_add_unit(org, "Gesch\u00e4ftsleitung", org_unit_id="leitung")
     org = org_ops.org_add_unit(org, "Vertrieb", org_unit_id="vertrieb")
     org = org_ops.org_add_unit(org, "Einkauf", org_unit_id="einkauf-abt")
+    org = org_ops.org_add_agent(
+        org, "Sabine Chef", role_ids=["teamleitung"], org_unit_id="leitung", agent_id="a-sabine"
+    )
     org = org_ops.org_add_agent(
         org, "Erika Sander", role_ids=["sachbearbeiter"], org_unit_id="vertrieb", agent_id="a-erika"
     )
@@ -109,7 +123,13 @@ def _build_org() -> OrgModel:
     org = org_ops.org_add_agent(
         org, "Paul Klein", role_ids=["einkauf"], org_unit_id="einkauf-abt", agent_id="a-paul"
     )
+    # A two-level hierarchy so the org chart shows a real tree: sales and
+    # purchasing both report to the management unit, each with its own manager.
+    org = org_ops.org_set_parent(org, "vertrieb", "leitung")
+    org = org_ops.org_set_parent(org, "einkauf-abt", "leitung")
+    org = org_ops.org_set_manager(org, "leitung", "a-sabine")
     org = org_ops.org_set_manager(org, "vertrieb", "a-tom")
+    org = org_ops.org_set_manager(org, "einkauf-abt", "a-paul")
     return org
 
 
@@ -161,16 +181,86 @@ def _build_urlaubsantrag(org: OrgModel) -> ProcessSchema:
     s = ops.assign_staff_rule(s, _nid(s, "Genehmigung durch Leitung"), _role("teamleitung"))
     s = ops.assign_staff_rule(s, _nid(s, "Ablehnung dokumentieren"), _role("sachbearbeiter"))
     s = ops.assign_staff_rule(s, _nid(s, "Mitarbeiter benachrichtigen"), _role("sachbearbeiter"))
+
+    # Input mask (form designer, U1-U3): the first step is entered through a
+    # designed mask -- a number field for the days plus an optional free-text
+    # reason. The mask *is* the data flow (a WRITE field yields a write access),
+    # so "tage" stays guaranteed-written before the split (K7 still holds).
+    s = ops.add_data_element(s, "Begr\u00fcndung", DataType.STRING, element_id="grund")
+    s = ops.set_form(
+        s,
+        erfassen,
+        title="Urlaubsantrag erfassen",
+        fields=[
+            ops.FormFieldSpec(
+                element_id="tage",
+                widget=WidgetKind.NUMBER,
+                label="Urlaubstage",
+                help_text="Anzahl der beantragten Arbeitstage.",
+            ),
+            ops.FormFieldSpec(
+                element_id="grund",
+                widget=WidgetKind.TEXTAREA,
+                label="Begr\u00fcndung (optional)",
+                required=False,
+            ),
+        ],
+    )
+
+    # Value-adding classification (E3) -- all three classes appear so the
+    # monitoring value breakdown has something to show.
+    s = ops.set_value_class(s, erfassen, ValueClass.BUSINESS_NECESSARY)
+    s = ops.set_value_class(s, pruefen, ValueClass.BUSINESS_NECESSARY)
+    s = ops.set_value_class(s, _nid(s, "Genehmigung durch Leitung"), ValueClass.VALUE_ADDING)
+    s = ops.set_value_class(s, _nid(s, "Ablehnung dokumentieren"), ValueClass.NON_VALUE_ADDING)
+    s = ops.set_value_class(s, _nid(s, "Mitarbeiter benachrichtigen"), ValueClass.VALUE_ADDING)
+
+    # Work-item priority (E8): the approval by the team lead is the most urgent
+    # step, so it sorts to the top of the worklist.
+    s = ops.set_node_priority(
+        s, pruefen, WorkItemPriority(impact=ImpactUrgency.MEDIUM, urgency=ImpactUrgency.HIGH)
+    )
+    s = ops.set_node_priority(
+        s,
+        _nid(s, "Genehmigung durch Leitung"),
+        WorkItemPriority(impact=ImpactUrgency.HIGH, urgency=ImpactUrgency.HIGH),
+    )
+
+    # Temporal perspective (E5, T1/T2 static): per-step target durations and a
+    # process deadline. The critical path (erfassen + pruefen + longest branch +
+    # benachrichtigen) must fit the deadline, which the validator checks (T2).
+    s = ops.set_time_constraint(s, erfassen, TimeConstraint(max_duration_seconds=3600))
+    s = ops.set_time_constraint(s, pruefen, TimeConstraint(max_duration_seconds=7200))
+    s = ops.set_time_constraint(
+        s, _nid(s, "Genehmigung durch Leitung"), TimeConstraint(max_duration_seconds=86400)
+    )
+    s = ops.set_time_constraint(
+        s, _nid(s, "Ablehnung dokumentieren"), TimeConstraint(max_duration_seconds=3600)
+    )
+    s = ops.set_time_constraint(
+        s, _nid(s, "Mitarbeiter benachrichtigen"), TimeConstraint(max_duration_seconds=1800)
+    )
+    s = ops.set_deadline(s, 3 * 86400)  # three working days
     return ops.release(s)
 
 
 def _build_beschaffung(org: OrgModel) -> ProcessSchema:
-    """Draft process: a procurement request with a parallel block (still ENTWURF)."""
+    """Draft process: a procurement request with a parallel block (still ENTWURF).
+
+    This second, unreleased schema deliberately exercises the *advanced* feature
+    set so every view has something to show even before release: an external
+    SQL-bound data element (connector), an automated (external-task) step, an
+    input mask, structured staff rules (org-unit and OR combinator) and the
+    analytical annotations (value class, priority, time).
+    """
 
     s = ops.create_empty_schema("Beschaffungsantrag", schema_id=SCHEMA_BESCHAFFUNG)
     s = ops.parallel_insert(s, ["Angebote einholen", "Budget pr\u00fcfen"], after_node_id="start")
     join = _gateway_id(s, NodeType.AND_JOIN)
     s = ops.serial_insert(s, "Bestellung freigeben", after_node_id=join)
+    angebote = _nid(s, "Angebote einholen")
+    budget = _nid(s, "Budget pr\u00fcfen")
+    freigeben = _nid(s, "Bestellung freigeben")
 
     # Two data objects filled on the *parallel* branches and merged downstream:
     # "Angebote einholen" writes the order value, "Budget pr\u00fcfen" writes the
@@ -178,18 +268,91 @@ def _build_beschaffung(org: OrgModel) -> ProcessSchema:
     # holds, and the writers target different elements -> no D2 conflict).
     s = ops.add_data_element(s, "Bestellwert", DataType.FLOAT, element_id="betrag")
     s = ops.add_data_element(s, "Budget genehmigt", DataType.BOOLEAN, element_id="budget_ok")
-    angebote = _nid(s, "Angebote einholen")
-    budget = _nid(s, "Budget pr\u00fcfen")
-    freigeben = _nid(s, "Bestellung freigeben")
+    # A lookup key (written on the offer branch) and an EXTERNAL element whose
+    # value is fetched from the ERP via a structured scalar select (see below).
+    s = ops.add_data_element(s, "Lieferantennummer", DataType.INTEGER, element_id="lieferant_nr")
+    s = ops.add_data_element(s, "Kreditlimit", DataType.FLOAT, element_id="kreditlimit")
     s = ops.connect_data(s, angebote, "betrag", AccessMode.WRITE)
+    s = ops.connect_data(s, angebote, "lieferant_nr", AccessMode.WRITE)
     s = ops.connect_data(s, budget, "budget_ok", AccessMode.WRITE)
     s = ops.connect_data(s, freigeben, "betrag", AccessMode.READ)
     s = ops.connect_data(s, freigeben, "budget_ok", AccessMode.READ)
+    # EXTERNAL reads are non-mandatory (resolved by the connector at runtime),
+    # otherwise D1 would demand a prior WRITE that an external element never has.
+    s = ops.connect_data(s, freigeben, "kreditlimit", AccessMode.READ, mandatory=False)
+
+    # Data connector + CbC-safe scalar SQL binding (C1/C4-C6): the supplier's
+    # credit limit is read from the ERP by supplier number. The select is a
+    # structured skizze (never free-form SQL): one typed column, an equality
+    # filter on the (INSTANCE) key written beforehand, and a KEY_UNIQUE
+    # cardinality guarantee -- so exactly one typed scalar comes back.
+    s = ops.register_connector(s, "ERP-System", ConnectorKind.MS_SQL, connector_id="erp")
+    s = ops.bind_sql_select(
+        s,
+        "kreditlimit",
+        connector_id="erp",
+        entity="lieferanten",
+        column="kreditlimit",
+        column_type=DataType.FLOAT,
+        filters=[
+            QueryFilter(
+                column="nr",
+                column_type=DataType.INTEGER,
+                operator=FilterOperator.EQ,
+                key_element_id="lieferant_nr",
+            )
+        ],
+        cardinality=Cardinality.KEY_UNIQUE,
+        unique_column="nr",
+    )
 
     s = ops.link_org_model(s, ORG_ID, org)
-    s = ops.assign_staff_rule(s, _nid(s, "Angebote einholen"), _role("einkauf"))
-    s = ops.assign_staff_rule(s, _nid(s, "Budget pr\u00fcfen"), _role("teamleitung"))
-    s = ops.assign_staff_rule(s, _nid(s, "Bestellung freigeben"), _role("teamleitung"))
+
+    # Automated step (E11): "Angebote einholen" is driven by an external worker
+    # as an external task on topic "angebote" -- no interactive performer, so it
+    # carries a service binding instead of a staff rule.
+    s = ops.assign_service(s, angebote, "ERP-Angebotsabruf", automatic=True)
+    s = ops.set_automation(s, angebote, AutomationKind.EXTERNAL_TASK, topic="angebote")
+
+    # Input mask on the manual budget check: a single checkbox for the verdict.
+    s = ops.set_form(
+        s,
+        budget,
+        title="Budgetpr\u00fcfung",
+        fields=[
+            ops.FormFieldSpec(
+                element_id="budget_ok",
+                widget=WidgetKind.CHECKBOX,
+                label="Budget genehmigt",
+            )
+        ],
+    )
+
+    # Structured staff rules (BZR): an org-unit leaf and an OR combinator, so the
+    # resource view shows more than plain role leaves.
+    s = ops.assign_staff_rule(
+        s, budget, StaffRule(kind=StaffRuleKind.ORG_UNIT, ref="vertrieb")
+    )
+    s = ops.assign_staff_rule(
+        s,
+        freigeben,
+        StaffRule(
+            kind=StaffRuleKind.OR,
+            operands=[_role("teamleitung"), _role("einkauf")],
+        ),
+    )
+
+    # Analytical annotations (E3/E8/E5) on the draft as well.
+    s = ops.set_value_class(s, angebote, ValueClass.VALUE_ADDING)
+    s = ops.set_value_class(s, budget, ValueClass.BUSINESS_NECESSARY)
+    s = ops.set_value_class(s, freigeben, ValueClass.VALUE_ADDING)
+    s = ops.set_node_priority(
+        s, freigeben, WorkItemPriority(impact=ImpactUrgency.HIGH, urgency=ImpactUrgency.MEDIUM)
+    )
+    s = ops.set_time_constraint(s, angebote, TimeConstraint(max_duration_seconds=7200))
+    s = ops.set_time_constraint(s, budget, TimeConstraint(max_duration_seconds=3600))
+    s = ops.set_time_constraint(s, freigeben, TimeConstraint(max_duration_seconds=1800))
+    s = ops.set_deadline(s, 86400)  # one working day
     return s  # left in ENTWURF on purpose: shows a draft / test-instance state
 
 

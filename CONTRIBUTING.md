@@ -91,7 +91,9 @@ Versionssprung nach [SemVer](https://semver.org/lang/de/) (Vorabphase `0.y.z`):
    schließen, neuen leeren `[Unveröffentlicht]`-Block anlegen, Vergleichslinks
    unten pflegen.
 2. Version anheben (muss dem Tag ohne `v` entsprechen): `core/pyproject.toml`
-   sowie `deploy/helm/Chart.yaml` (`version` **und** `appVersion`).
+   sowie `deploy/helm/Chart.yaml` (`version` **und** `appVersion`). Die Anwendung
+   (API `/health`/OpenAPI und Web-Client) liest die Version zur Laufzeit aus den
+   Paket-Metadaten (`procworks.__version__`) und zieht damit automatisch nach.
 3. Gates lokal grün (`ruff check .`, `mypy src`, `pytest -q` in `core/`).
 4. Release-Commit `chore(release): vX.Y.Z`.
 5. Annotierten Tag setzen und mitschieben:
