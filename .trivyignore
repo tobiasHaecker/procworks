@@ -5,3 +5,11 @@
 # das derzeit noch mit Go 1.26.3 gebaut ist. Nicht durch uns behebbar; entfernen,
 # sobald ein neueres caddy-Image (mit gepatchtem Go) veröffentlicht ist.
 CVE-2026-42504
+#
+# CVE-2026-27145 — Go-stdlib (crypto/x509, Denial of Service durch exzessive
+# Verarbeitung von DNS-Namen, HIGH), gefixt in Go 1.25.11 / 1.26.4. Betrifft
+# ebenfalls das mit Go 1.26.3 gebaute /usr/bin/caddy im offiziellen
+# caddy:2-alpine-Image. Nicht durch uns behebbar (wir kompilieren Caddy nicht
+# selbst); entfernen, sobald ein neueres caddy-Image (mit gepatchtem Go)
+# veröffentlicht ist.
+CVE-2026-27145
