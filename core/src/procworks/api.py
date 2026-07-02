@@ -64,20 +64,25 @@ from procworks.integration_runtime import ExternalTaskError, ExternalTaskRuntime
 from procworks.metrics import ModelReport
 from procworks.model import (
     AccessMode,
+    AggregateKind,
     AutomationKind,
+    Cardinality,
     ConnectorKind,
     DataType,
     ExecutorKind,
     ExternalTask,
+    FilterOperator,
     FollowUpMode,
     FollowUpTrigger,
     ImpactUrgency,
     Incident,
     InstanceState,
     LifecycleState,
+    OrderBy,
     OrgModel,
     ProcessInstance,
     ProcessSchema,
+    QueryFilter,
     ServiceBinding,
     StaffRule,
     TemplateParameter,
@@ -490,6 +495,39 @@ class BindExternalDataRequest(BaseModel):
     connector_id: str = Field(..., examples=["erp"])
     entity: str = Field(..., examples=["Kunde"])
     key_element_id: str = Field(..., examples=["kunden_nr"])
+
+
+class QueryFilterRequest(BaseModel):
+    column: str = Field(..., examples=["kd_id"])
+    column_type: DataType = Field(..., examples=[DataType.INTEGER])
+    operator: FilterOperator = Field(..., examples=[FilterOperator.EQ])
+    key_element_id: str = Field(..., examples=["kunden_nr"])
+
+
+class OrderByRequest(BaseModel):
+    column: str = Field(..., examples=["created"])
+    descending: bool = False
+
+
+class SqlSelectRequest(BaseModel):
+    connector_id: str = Field(..., examples=["erp"])
+    entity: str = Field(..., examples=["Kunde"])
+    column: str = Field(..., examples=["name"])
+    column_type: DataType = Field(..., examples=[DataType.STRING])
+    aggregate: AggregateKind = AggregateKind.NONE
+    filters: list[QueryFilterRequest] = Field(default_factory=list)
+    cardinality: Cardinality = Field(..., examples=[Cardinality.KEY_UNIQUE])
+    order_by: list[OrderByRequest] = Field(default_factory=list)
+    unique_column: str = ""
+
+
+class SqlWriteRequest(BaseModel):
+    connector_id: str = Field(..., examples=["erp"])
+    entity: str = Field(..., examples=["Kunde"])
+    column: str = Field(..., examples=["status"])
+    column_type: DataType = Field(..., examples=[DataType.STRING])
+    filters: list[QueryFilterRequest] = Field(default_factory=list)
+    unique_column: str = ""
 
 
 class ImportBpmnRequest(BaseModel):
@@ -1321,6 +1359,74 @@ def post_bind_external_data(
             connector_id=req.connector_id,
             entity=req.entity,
             key_element_id=req.key_element_id,
+        )
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/data-elements/{element_id}/sql-select",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_bind_sql_select(
+    schema_id: str, element_id: str, req: SqlSelectRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    filters = [
+        QueryFilter(
+            column=f.column,
+            column_type=f.column_type,
+            operator=f.operator,
+            key_element_id=f.key_element_id,
+        )
+        for f in req.filters
+    ]
+    order_by = [OrderBy(column=o.column, descending=o.descending) for o in req.order_by]
+    return _commit_or_422(
+        lambda: ops.bind_sql_select(
+            schema,
+            element_id,
+            connector_id=req.connector_id,
+            entity=req.entity,
+            column=req.column,
+            column_type=req.column_type,
+            aggregate=req.aggregate,
+            filters=filters,
+            cardinality=req.cardinality,
+            order_by=order_by,
+            unique_column=req.unique_column,
+        )
+    )
+
+
+@app.post(
+    "/schemas/{schema_id}/data-elements/{element_id}/sql-write",
+    response_model=ProcessSchema,
+    dependencies=[_model],
+)
+def post_bind_sql_write(
+    schema_id: str, element_id: str, req: SqlWriteRequest
+) -> ProcessSchema:
+    schema = _get_or_404(schema_id)
+    filters = [
+        QueryFilter(
+            column=f.column,
+            column_type=f.column_type,
+            operator=f.operator,
+            key_element_id=f.key_element_id,
+        )
+        for f in req.filters
+    ]
+    return _commit_or_422(
+        lambda: ops.bind_sql_write(
+            schema,
+            element_id,
+            connector_id=req.connector_id,
+            entity=req.entity,
+            column=req.column,
+            column_type=req.column_type,
+            filters=filters,
+            unique_column=req.unique_column,
         )
     )
 
@@ -2693,6 +2799,12 @@ class SampleReadRequest(BaseModel):
     limit: int = Field(default=1, ge=1, le=100, examples=[5])
 
 
+class ColumnInfo(BaseModel):
+    column: str = Field(..., examples=["name"])
+    sql_type: str = Field(..., examples=["VARCHAR(200)"])
+    data_type: DataType | None = Field(default=None, examples=[DataType.STRING])
+
+
 def _require_connector(connector_id: str) -> None:
     if not _connections.has(connector_id):
         raise HTTPException(
@@ -2748,6 +2860,24 @@ def v1_sample_read_connector(
     except DataAccessError as err:
         raise HTTPException(status_code=502, detail={"message": str(err)}) from err
     return [dict(row) for row in rows]
+
+
+@_v1.get("/connectors/{connector_id}/columns", response_model=list[ColumnInfo])
+def v1_connector_columns(
+    connector_id: str,
+    entity: str,
+    principal: Principal = Depends(
+        require_scope(SCOPE_DATA_READ, "viewer", "operator", "modeler", "admin")
+    ),
+) -> list[ColumnInfo]:
+    """Reflect an entity's columns + mapped data types for the GUI assistant."""
+
+    _require_connector(connector_id)
+    try:
+        columns = _connections.columns(connector_id, entity)
+    except DataAccessError as err:
+        raise HTTPException(status_code=502, detail={"message": str(err)}) from err
+    return [ColumnInfo.model_validate(column) for column in columns]
 
 
 # --- Webhooks (event side of the open API, roadmap P4/E13) -----------------

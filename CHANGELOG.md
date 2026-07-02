@@ -9,6 +9,54 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **CbC-sichere SQL-Datenanbindung – Fundament (Konzept + Q0–Q2):** Ein neues
+  Konzept [docs/SQL-Datenanbindung-Konzept.md](docs/SQL-Datenanbindung-Konzept.md)
+  beschreibt, wie Datenelemente **intuitiv per SQL-`SELECT`** an externe
+  Datenquellen gebunden werden – mit **Correctness by Construction auch für die
+  SQL-Erzeugung**: ein `SELECT` entsteht nur aus einer strukturierten,
+  entscheidbaren Spezifikation (kein Freitext-SQL) und wird so erzeugt, dass sein
+  Ergebnis **zum zu füllenden Datenelement passt** (Typ und Kardinalität). Der
+  **DB-freie** Kern (Q0) ist enthalten: das additive Meta-Modell
+  (`SqlSelectBinding`, `QueryFilter`, `OrderBy`, `FilterOperator`,
+  `AggregateKind`, `Cardinality`, `aggregate_result_type`,
+  `DataElement.select`), ein **deterministischer, parametrisierter
+  Select-Compiler** (`compile_select`, injektionssicher über
+  Bezeichner-Whitelist und Bind-Parameter) sowie die neue Validierungsgruppe
+  **C4–C6** (C4: Projektionstyp passt zum Element; C5: Filter wohlgeformt,
+  typkonform und rechtzeitig versorgt – D1-gekoppelt; C6: das `SELECT` liefert
+  höchstens eine Zeile). Darauf setzen die Anbindung und Laufzeit auf: die
+  Kern-Operation **`bind_sql_select`** und der Endpunkt
+  `POST /schemas/{id}/data-elements/{element_id}/sql-select` binden ein Element
+  CbC-geprüft (Q1); zur Laufzeit lösen `SqlAlchemyConnector.select_scalar` und
+  `DataAccessLayer.read_scalar` das `SELECT` **parametrisiert** auf, die
+  External-Task-**Pre-Fetch** legt den **typgeprüften Skalar** ins Eingabepaket,
+  und `GET /v1/connectors/{id}/columns` liefert per Introspektion die Spalten
+  samt gemapptem Datentyp für den geführten Assistenten (Q2). Der BPMN-Export
+  führt jetzt auch die **Connector-Registry** mit, sodass externe Bindungen
+  (Record **und** Skalar-Select) den Round-Trip überstehen. Die record-basierte
+  EXTERNAL-Bindung bleibt unverändert; die neue Gruppe ist **stumm ohne**
+  Skalar-Select-Bindung und **lockert kein** bestehendes Kriterium. Neue
+  Testsuiten `test_scalar_query.py` (Compiler-Golden + Validator, DB-frei) und
+  `test_scalar_query_sql.py` (SQLite: `select_scalar`/Introspektion/Pre-Fetch/
+  API/BPMN). Im Web-Client führt ein **geführter Assistent** (Datenanbindungs-
+  Sicht → „SQL-Select“) intuitiv durch Quelle, Ergebnis-Spalte (mit optionaler
+  Spalten-Introspektion) und Filter, zeigt eine **Live-`SELECT`-Vorschau** und
+  eine **Typ-/Kardinalitäts-Ampel** (C4/C6) – den Fehler kann man gar nicht erst
+  absenden; der Kern bleibt die alleinige Autorität (422 bei Regelbruch).  Symmetrisch dazu bindet ein **strukturierter Skalar-Write** (Q4) ein Element
+  an ein `UPDATE <entity> SET <column> = :val WHERE …`: neue Regeln **C7–C9**
+  (C7 Zielspaltentyp == Elementtyp, C8 Filter wohlgeformt/typkonform/rechtzeitig,
+  C9 **genau eine Zeile** über einen eindeutigen Schlüssel), Operation
+  `bind_sql_write`, Endpunkt `POST …/sql-write`, `update_scalar`/`write_scalar`,
+  Post-Flush des erzeugten Skalars beim Aktivitätsabschluss und ein
+  symmetrischer Web-Assistent „SQL-Write". Dieselbe strukturierte Skizze bedient
+  über einen **OData-v4-Connector** (Q5, `odata.py`) auch **Dynamics 365
+  (Dataverse) und SAP (SAP Gateway)**: `SqlSelectBinding`/`SqlWriteBinding`
+  werden in `$select`/`$filter`/`$orderby`/`$top`/`$count`/`$apply` bzw. einen
+  keyed `PATCH` übersetzt – über **dieselbe Connector-SPI** (HTTP via
+  Standardbibliothek, injizierbarer Transport, kein neues Laufzeit-Paket), sodass
+  Kern, Regeln und GUI unverändert bleiben; die Verbindungs-Registry wählt den
+  Treiber anhand der Connector-Art (`MS_SQL`/`MYSQL` → SQL, `DYNAMICS_365`/`SAP`
+  → OData).
 - **Wiederverwendbare Subprozesse mit Submodell-Bibliothek und
   Datenübergabe:** Eine Aktivität lässt sich jetzt in einen **Subprozess
   umwandeln**, der an ein eigenständig entwickeltes, freigegebenes **Submodell**

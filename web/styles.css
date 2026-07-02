@@ -359,6 +359,10 @@ svg.graph { display: block; min-width: 100%; user-select: none; transform-origin
   padding: 12px; font-size: 12px; line-height: 1.5; max-height: 50vh; overflow: auto;
   white-space: pre; margin: 0;
 }
+.ok-hint { color: #6ee7a8; }
+.bad-hint { color: #ff9c9c; }
+.check-inline { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--txt-dim); white-space: nowrap; }
+.check-row input[type="text"], .check-row select { flex: 1; min-width: 0; }
 
 /* ---- Prüfinstanz view (4-Quadranten-Cockpit) ---- */
 .quad-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

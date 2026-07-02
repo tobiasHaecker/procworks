@@ -43,6 +43,7 @@ Hintergrund/Design: [Integrations-Konzept-Externe-Anbindung.md](Integrations-Kon
 | [Architektur-Konzept-Prozessmodellierung.md](Architektur-Konzept-Prozessmodellierung.md) | Hauptquelle: Correctness by Construction, Korrektheitskriterien (K/D/C/Z/A/H/F/T/I/B/M/R), Meta-Modell, Architektur, Roadmap |
 | [Auth-Konzept.md](Auth-Konzept.md) | Pluggable Authentifizierung (offen/Token/Passwort), Rollen & RBAC |
 | [Integrations-Konzept-Externe-Anbindung.md](Integrations-Konzept-Externe-Anbindung.md) | Konzept der offenen API-Anbindung (Inbound/Outbound/Daten/Webhooks) |
+| [SQL-Datenanbindung-Konzept.md](SQL-Datenanbindung-Konzept.md) | CbC-sichere SQL-Datenanbindung: strukturierter Select-/Write-Builder (C4–C9), OData-Connector |
 
 ## Betrieb & Anbindung
 

@@ -124,6 +124,133 @@ class ExternalBinding(BaseModel):
     key_element_id: str
 
 
+class FilterOperator(StrEnum):
+    """Comparison operator of a structured SQL-select filter (§6, rule C5).
+
+    A closed whitelist so a filter never carries free-form SQL. Ordering
+    operators only apply to ordered types (checked by C5); ``IN`` matches set
+    membership; ``LIKE`` matches string patterns.
+    """
+
+    EQ = "EQ"
+    NE = "NE"
+    LT = "LT"
+    LE = "LE"
+    GT = "GT"
+    GE = "GE"
+    LIKE = "LIKE"
+    IN = "IN"
+
+
+class AggregateKind(StrEnum):
+    """Aggregate applied to the projected column of a scalar select (rule C4).
+
+    ``NONE`` projects the column itself; the others always yield exactly one row
+    (which is what makes ``AGGREGATE`` a cardinality guarantee, C6). The result
+    type is derived by :func:`aggregate_result_type`.
+    """
+
+    NONE = "NONE"
+    COUNT = "COUNT"
+    SUM = "SUM"
+    MIN = "MIN"
+    MAX = "MAX"
+    AVG = "AVG"
+
+
+class Cardinality(StrEnum):
+    """How a scalar select guarantees at most one result row (rule C6).
+
+    ``KEY_UNIQUE``: an equality filter on the declared unique column.
+    ``AGGREGATE``: the projection is an aggregate (always one row).
+    ``FIRST_ORDERED``: ``ORDER BY ... LIMIT 1`` over a non-empty ordering.
+    """
+
+    KEY_UNIQUE = "KEY_UNIQUE"
+    AGGREGATE = "AGGREGATE"
+    FIRST_ORDERED = "FIRST_ORDERED"
+
+
+class QueryFilter(BaseModel):
+    """A structured ``WHERE`` condition of a scalar select (rule C5).
+
+    ``column`` is the (whitelisted) filter column, ``column_type`` its declared
+    type, ``operator`` a member of the closed :class:`FilterOperator` whitelist
+    and ``key_element_id`` the INSTANCE data element whose value is bound as a
+    parameter at access time (never concatenated -- no injection surface).
+    """
+
+    column: str
+    column_type: DataType
+    operator: FilterOperator
+    key_element_id: str
+
+
+class OrderBy(BaseModel):
+    """One ``ORDER BY`` term of a ``FIRST_ORDERED`` scalar select (rule C6)."""
+
+    column: str
+    descending: bool = False
+
+
+class SqlSelectBinding(BaseModel):
+    """A structured, type- and cardinality-safe scalar SQL binding (§4).
+
+    A ``select``-bound EXTERNAL data element resolves to a single, typed scalar
+    compiled from this specification (never free-form SQL). ``column`` is the one
+    projected column (or the aggregate's argument), ``column_type`` its declared
+    type; the effective result type is :func:`aggregate_result_type` and must
+    equal the element's type (C4). ``filters`` supply parameterized ``WHERE``
+    conditions (C5); ``cardinality`` picks the guarantee that at most one row is
+    returned (C6): ``KEY_UNIQUE`` requires an equality filter on ``unique_column``,
+    ``AGGREGATE`` an aggregate, ``FIRST_ORDERED`` a non-empty ``order_by``.
+    """
+
+    connector_id: str
+    entity: str
+    column: str
+    column_type: DataType
+    aggregate: AggregateKind = AggregateKind.NONE
+    filters: list[QueryFilter] = Field(default_factory=list)
+    cardinality: Cardinality = Cardinality.KEY_UNIQUE
+    order_by: list[OrderBy] = Field(default_factory=list)
+    unique_column: str = ""
+
+
+def aggregate_result_type(aggregate: AggregateKind, column_type: DataType) -> DataType:
+    """Return the result type a projection yields under ``aggregate`` (C4).
+
+    ``COUNT`` always yields an INTEGER, ``AVG`` always a FLOAT; ``SUM``/``MIN``/
+    ``MAX`` and the non-aggregated projection keep the column's own type.
+    """
+
+    if aggregate is AggregateKind.COUNT:
+        return DataType.INTEGER
+    if aggregate is AggregateKind.AVG:
+        return DataType.FLOAT
+    return column_type
+
+
+class SqlWriteBinding(BaseModel):
+    """A structured, type-safe scalar SQL write-back binding (§7, Q4).
+
+    Symmetric to :class:`SqlSelectBinding`: when the bound EXTERNAL element is
+    written by an activity, the produced scalar is post-flushed as a single,
+    parameterized ``UPDATE <entity> SET <column> = :val WHERE ...``. ``column``
+    is the target column, ``column_type`` its declared type (must equal the
+    element's type, C7); ``filters`` locate the row (C8). To make the write
+    address **exactly one** row (C9), a write always uses the KEY_UNIQUE
+    guarantee: an equality filter on the declared ``unique_column`` (no
+    aggregate/ordering -- an UPDATE targets the keyed row, never many).
+    """
+
+    connector_id: str
+    entity: str
+    column: str
+    column_type: DataType
+    filters: list[QueryFilter] = Field(default_factory=list)
+    unique_column: str = ""
+
 
 #: Access modes that read a data element.
 READ_MODES = frozenset({AccessMode.READ, AccessMode.READ_WRITE})
@@ -201,6 +328,14 @@ class DataElement(BaseModel):
     data_type: DataType
     source: DataSourceKind = DataSourceKind.INSTANCE
     external: ExternalBinding | None = None
+    #: Alternative EXTERNAL binding: a structured, type- and cardinality-safe
+    #: scalar SQL select (rules C4-C6). Mutually exclusive with ``external`` --
+    #: an EXTERNAL element is either record-bound (``external``) or scalar-select-
+    #: bound (``select``). ``None`` on INSTANCE elements and record-bound ones.
+    select: SqlSelectBinding | None = None
+    #: Alternative EXTERNAL binding: a structured scalar SQL write-back (rules
+    #: C7-C9). Mutually exclusive with ``external`` and ``select``.
+    write: SqlWriteBinding | None = None
 
 
 class DataAccess(BaseModel):

@@ -123,18 +123,20 @@ def _resolve_outputs(
     node_id: str,
     binding: ServiceBinding | None,
     variables: dict[str, object],
-) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+) -> tuple[dict[str, object], dict[str, dict[str, object]], dict[str, object]]:
     """Translate reported output variables into validated data-element writes.
 
     A worker may address an output by template parameter name (mapped back to
     its element) or directly by data-element id. Every target must be a declared
     WRITE access (or a mapped parameter) of the step -- otherwise the report is
-    rejected (422). Two kinds of write are returned separately:
+    rejected (422). Three kinds of write are returned separately:
 
     * **INSTANCE** elements: the value must match the element's declared type and
       is written into the process instance by the pure engine.
-    * **EXTERNAL** elements: the value must be a record (mapping of fields) and is
-      post-flushed through the Data Access Layer to the bound connector.
+    * **EXTERNAL record** elements: the value must be a record (mapping of fields)
+      and is post-flushed as a whole record through the Data Access Layer.
+    * **EXTERNAL scalar-write** elements: the value must be a single typed scalar
+      and is post-flushed via a parameterized ``UPDATE`` (C7-C9).
     """
 
     reverse: dict[str, str] = {}
@@ -146,6 +148,7 @@ def _resolve_outputs(
 
     instance_out: dict[str, object] = {}
     external_out: dict[str, dict[str, object]] = {}
+    scalar_out: dict[str, object] = {}
     for key, value in variables.items():
         element_id = reverse.get(key, key)
         if element_id not in writable:
@@ -156,6 +159,15 @@ def _resolve_outputs(
         if element is None:
             raise ExternalTaskError(f"unknown data element '{element_id}'", 422)
         if element.source is DataSourceKind.EXTERNAL:
+            if element.write is not None:
+                if not value_matches_type(element.data_type, value):
+                    raise ExternalTaskError(
+                        f"scalar write '{element_id}' is not a "
+                        f"{element.data_type.value}",
+                        422,
+                    )
+                scalar_out[element_id] = value
+                continue
             if not isinstance(value, Mapping):
                 raise ExternalTaskError(
                     f"external write '{element_id}' must be a record (object)", 422
@@ -167,7 +179,7 @@ def _resolve_outputs(
                 f"value for '{element_id}' is not a {element.data_type.value}", 422
             )
         instance_out[element_id] = value
-    return instance_out, external_out
+    return instance_out, external_out, scalar_out
 
 
 class ExternalTaskRuntime:
@@ -433,12 +445,28 @@ class ExternalTaskRuntime:
             if element is None or element.source is not DataSourceKind.EXTERNAL:
                 continue
             try:
-                record = self._dal.read(schema, instance.data_values, access.element_id)
+                if element.select is not None:
+                    value = self._dal.read_scalar(
+                        schema, instance.data_values, access.element_id
+                    )
+                    if value is not None and not value_matches_type(
+                        element.data_type, value
+                    ):
+                        raise ExternalTaskError(
+                            f"pre-fetch of '{access.element_id}' returned a value "
+                            f"that is not a {element.data_type.value}",
+                            502,
+                        )
+                    task.input_variables[access.element_id] = value
+                else:
+                    record = self._dal.read(
+                        schema, instance.data_values, access.element_id
+                    )
+                    task.input_variables[access.element_id] = dict(record)
             except DataAccessError as err:
                 raise ExternalTaskError(
                     f"pre-fetch of '{access.element_id}' failed: {err}", 502
                 ) from err
-            task.input_variables[access.element_id] = dict(record)
 
     def extend_lock(self, task_id: str, worker_id: str, lock_ms: int) -> ExternalTask:
         """Prolong a held lock by ``lock_ms`` for a long-running worker."""
@@ -480,10 +508,10 @@ class ExternalTaskRuntime:
             )
         schema = self._schema_for(instance)
         binding = schema.service_bindings.get(task.node_id)
-        instance_out, external_out = _resolve_outputs(
+        instance_out, external_out, scalar_out = _resolve_outputs(
             schema, task.node_id, binding, variables
         )
-        if external_out and self._dal is None:
+        if (external_out or scalar_out) and self._dal is None:
             raise ExternalTaskError(
                 "external write requires a configured connector", 422
             )
@@ -494,6 +522,16 @@ class ExternalTaskRuntime:
             assert self._dal is not None
             try:
                 self._dal.write(schema, instance.data_values, element_id, record)
+            except DataAccessError as err:
+                raise ExternalTaskError(
+                    f"post-flush of '{element_id}' failed: {err}", 502
+                ) from err
+        for element_id, scalar in scalar_out.items():
+            assert self._dal is not None
+            try:
+                self._dal.write_scalar(
+                    schema, instance.data_values, element_id, scalar
+                )
             except DataAccessError as err:
                 raise ExternalTaskError(
                     f"post-flush of '{element_id}' failed: {err}", 502

@@ -2,7 +2,7 @@
 
 > Schwerpunkt: Konzepte und **Korrektheitsgarantien** nach dem Vorbild der **ADEPT2-Forschung** (Universität Ulm, Dadam/Reichert), eingeordnet in den Standard **BPMN 2.0**.
 >
-> Status: Konzept. Version 0.10 (Roadmap §13.1 fortgeschrieben: additive Umsetzung von E3 Wertschöpfungs-Klassifikation, E5-statisch Zeitperspektive T1/T2, E7 Modellmetriken & 7PMG-Hinweise, E8 Arbeitslisten-Priorität sowie der Zeit-/Flexibilitätsteil von E4 – jeweils mit Tests und ohne Lockerung bestehender Kriterien; laufzeit-invasive Punkte E1/E2/E6/E9 sowie Kosten/Qualität in E4 bleiben ehrlich offen ausgewiesen). Frühere Vertiefung (0.9): 7PMG-Priorisierung/SEQUAL, ITIL-Eskalation & Priorität = Auswirkung + Dringlichkeit, drei Flexibilitätsdimensionen; Abschnitte 2.4.1, 3.8, 6.2.1, 6.5, 13.1, 15.1.
+> Status: Konzept. Version 0.11 (§9.4 neu: **typ- und kardinalitätssichere SQL-Skizzen C4–C9** – CbC auch für die SQL-Erzeugung, strukturierter Select-/Write-Builder statt Freitext-SQL, additiv umgesetzt inkl. OData-Connector; siehe eigenständiges [SQL-Datenanbindung-Konzept](SQL-Datenanbindung-Konzept.md)). Version 0.10 (Roadmap §13.1 fortgeschrieben: additive Umsetzung von E3 Wertschöpfungs-Klassifikation, E5-statisch Zeitperspektive T1/T2, E7 Modellmetriken & 7PMG-Hinweise, E8 Arbeitslisten-Priorität sowie der Zeit-/Flexibilitätsteil von E4 – jeweils mit Tests und ohne Lockerung bestehender Kriterien; laufzeit-invasive Punkte E1/E2/E6/E9 sowie Kosten/Qualität in E4 bleiben ehrlich offen ausgewiesen). Frühere Vertiefung (0.9): 7PMG-Priorisierung/SEQUAL, ITIL-Eskalation & Priorität = Auswirkung + Dringlichkeit, drei Flexibilitätsdimensionen; Abschnitte 2.4.1, 3.8, 6.2.1, 6.5, 13.1, 15.1.
 >
 > Leitprinzip (nicht verhandelbar): **Correctness by Construction** – jede Änderung am Modell führt ausnahmslos zu einem syntaktisch korrekten und ausführbaren Modell (siehe Abschnitt 1.1).
 
@@ -1027,6 +1027,23 @@ oder per **Direktzugriff** auf SQL-Server/OData/SAP. Eine **GUI-Integrationssich
 modelliert die Datenanbindung geführt und robust. Die Schicht ist eine **Boundary-
 Fähigkeit** (kein Bypass der CbC-Invariante, Kern bleibt rein); zugehörige Roadmap-Punkte:
 E10–E13 (§13.1).
+
+### 9.4 Typ- und kardinalitätssichere SQL-Skizzen (C4–C9)
+
+Über die Record-Bindung (C1–C3) hinaus lässt sich ein Datenelement **typ- und
+kardinalitätssicher** per **SQL-`SELECT`/`UPDATE`** an eine externe Quelle binden –
+mit **Correctness by Construction auch für die Erzeugung des SQL-Befehls**. Statt
+Freitext-SQL beschreibt der Modellierer eine strukturierte, entscheidbare **Skizze**
+(Entität, **eine** projizierte Spalte, strukturierte Filter, Kardinalitäts-Garantie),
+aus der ein **deterministischer, parametrisierter** Befehl kompiliert wird
+(injektionssicher über Bezeichner-Whitelist + Bind-Parameter). Die additive Regelgruppe
+**C4–C9** garantiert statisch: der Ergebnis- bzw. Zielspaltentyp passt zum Datenelement
+(C4/C7), jeder Filter ist wohlgeformt, typkonform gegen ein `INSTANCE`-Quellelement und
+auf jedem Pfad rechtzeitig versorgt (C5/C8, D1-gekoppelt), und die Abfrage liefert bzw.
+der Schreibzugriff trifft **höchstens eine** Zeile (C6/C9). Dieselbe Skizze wird auch
+über einen **OData-v4-Connector** (Dynamics 365 / SAP Gateway) bedient – dieselbe SPI,
+sodass Kern, Regeln und GUI unverändert bleiben. Vollständige Beschreibung:
+[Konzept: CbC-sichere SQL-Datenanbindung](SQL-Datenanbindung-Konzept.md).
 
 ---
 

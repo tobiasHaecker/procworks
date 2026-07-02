@@ -22,7 +22,9 @@ from procworks.model import (
     AccessMode,
     ActivityTemplate,
     Agent,
+    AggregateKind,
     AutomationKind,
+    Cardinality,
     ConnectorDescriptor,
     ConnectorKind,
     ControlEdge,
@@ -40,11 +42,15 @@ from procworks.model import (
     LifecycleState,
     Node,
     NodeType,
+    OrderBy,
     OrgModel,
     OrgUnit,
     ProcessSchema,
+    QueryFilter,
     Role,
     ServiceBinding,
+    SqlSelectBinding,
+    SqlWriteBinding,
     StaffRule,
     SubProcessBinding,
     TemplateParameter,
@@ -834,10 +840,110 @@ def bind_external_data(
             [ValidationFinding(rule="OP", message=f"data element '{element_id}' does not exist")]
         )
     element.source = DataSourceKind.EXTERNAL
+    element.select = None
+    element.write = None
     element.external = ExternalBinding(
         connector_id=connector_id,
         entity=entity,
         key_element_id=key_element_id,
+    )
+    return raise_if_invalid(candidate)
+
+
+def bind_sql_select(
+    schema: ProcessSchema,
+    element_id: str,
+    *,
+    connector_id: str,
+    entity: str,
+    column: str,
+    column_type: DataType,
+    aggregate: AggregateKind = AggregateKind.NONE,
+    filters: list[QueryFilter] | None = None,
+    cardinality: Cardinality = Cardinality.KEY_UNIQUE,
+    order_by: list[OrderBy] | None = None,
+    unique_column: str = "",
+) -> ProcessSchema:
+    """Bind a data element to a structured, scalar SQL select (concept §4, Q1).
+
+    Turns the element into an EXTERNAL element whose value is a single, typed
+    scalar compiled from a :class:`SqlSelectBinding` (never free-form SQL).
+
+    requires: schema editable; the element exists.
+    ensures:  the element's source is EXTERNAL with a scalar select binding and
+              the scalar-query rules C4-C6 hold -- the projection's result type
+              matches the element (C4), every filter is well-formed, type-
+              conformant and supplied before the element is read (C5), and the
+              select yields at most one row (C6). Otherwise the operation is
+              rejected and the schema stays unchanged.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    element = candidate.data_elements.get(element_id)
+    if element is None:
+        raise CorrectnessError(
+            [ValidationFinding(rule="OP", message=f"data element '{element_id}' does not exist")]
+        )
+    element.source = DataSourceKind.EXTERNAL
+    element.external = None
+    element.write = None
+    element.select = SqlSelectBinding(
+        connector_id=connector_id,
+        entity=entity,
+        column=column,
+        column_type=column_type,
+        aggregate=aggregate,
+        filters=list(filters or []),
+        cardinality=cardinality,
+        order_by=list(order_by or []),
+        unique_column=unique_column,
+    )
+    return raise_if_invalid(candidate)
+
+
+def bind_sql_write(
+    schema: ProcessSchema,
+    element_id: str,
+    *,
+    connector_id: str,
+    entity: str,
+    column: str,
+    column_type: DataType,
+    filters: list[QueryFilter] | None = None,
+    unique_column: str = "",
+) -> ProcessSchema:
+    """Bind a data element to a structured scalar SQL write-back (concept §7, Q4).
+
+    Turns the element into an EXTERNAL element whose produced scalar is written
+    back via a parameterized ``UPDATE`` (never free-form SQL).
+
+    requires: schema editable; the element exists.
+    ensures:  the element's source is EXTERNAL with a scalar write binding and
+              the scalar-write rules C7-C9 hold -- the target column type matches
+              the element (C7), every filter is well-formed, type-conformant and
+              supplied before the element is written (C8), and the write targets
+              exactly one row (C9). Otherwise the operation is rejected and the
+              schema stays unchanged.
+    """
+
+    candidate = schema.model_copy(deep=True)
+    _require_editable(candidate)
+    element = candidate.data_elements.get(element_id)
+    if element is None:
+        raise CorrectnessError(
+            [ValidationFinding(rule="OP", message=f"data element '{element_id}' does not exist")]
+        )
+    element.source = DataSourceKind.EXTERNAL
+    element.external = None
+    element.select = None
+    element.write = SqlWriteBinding(
+        connector_id=connector_id,
+        entity=entity,
+        column=column,
+        column_type=column_type,
+        filters=list(filters or []),
+        unique_column=unique_column,
     )
     return raise_if_invalid(candidate)
 

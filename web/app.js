@@ -107,6 +107,10 @@ const WIDGET_LABELS = {
   DROPDOWN: "Auswahlliste", CHECKBOX: "Kontrollk\u00E4stchen", DATE: "Datumsfeld",
 };
 const CONNECTOR_KINDS = ["MS_SQL", "MYSQL", "DYNAMICS_365", "SAP", "CUSTOM"];
+// Structured scalar SQL-select (C4-C6): closed operator/aggregate/cardinality sets.
+const SQL_OPERATORS = [["EQ", "="], ["NE", "\u2260"], ["LT", "<"], ["LE", "\u2264"], ["GT", ">"], ["GE", "\u2265"], ["LIKE", "LIKE"], ["IN", "IN"]];
+const SQL_AGGREGATES = ["NONE", "COUNT", "SUM", "MIN", "MAX", "AVG"];
+const SQL_CARDINALITIES = [["KEY_UNIQUE", "Eindeutiger Schl\u00FCssel"], ["AGGREGATE", "Aggregat (1 Zeile)"], ["FIRST_ORDERED", "Erste nach Sortierung"]];
 // Domain events a webhook may subscribe to (mirrors outbox.WEBHOOK_EVENTS). The
 // server validates the selection; this list only drives the checkbox picker.
 const WEBHOOK_EVENT_TYPES = [
@@ -2985,7 +2989,7 @@ function elemName(schema, id) {
 function dataBindingPanel() {
   const head = el("div", { class: "panel-h" },
     el("h2", null, "Datenanbindung (extern)"),
-    el("span", { class: "sub" }, "Datenelemente an Connectoren binden (C1\u2013C3)"));
+    el("span", { class: "sub" }, "Datenelemente an Connectoren binden (C1\u2013C6)"));
   if (!state.schema) {
     return el("div", { class: "panel" }, head,
       el("div", { class: "panel-b" }, emptyState("Kein Schema ausgew\u00E4hlt \u2013 oben ein Schema w\u00E4hlen.")));
@@ -3008,11 +3012,20 @@ function dataBindingPanel() {
     const src = d.source === "EXTERNAL"
       ? el("span", { class: "pill pill-amber" }, "EXTERN")
       : el("span", { class: "pill pill-gray" }, "Instanz");
-    const detail = d.external
-      ? `${d.external.connector_id} \u00B7 ${d.external.entity} \u00B7 Schl\u00FCssel ${elemName(schema, d.external.key_element_id)}`
-      : "\u2013";
-    const bindBtn = el("button", { class: "btn small ghost", onClick: () => bindExternalElement(d), disabled: !draft || !hasConn }, "Extern anbinden");
-    return [d.name, d.data_type, src, detail, bindBtn];
+    let detail = "\u2013";
+    if (d.external) {
+      detail = `${d.external.connector_id} \u00B7 ${d.external.entity} \u00B7 Schl\u00FCssel ${elemName(schema, d.external.key_element_id)}`;
+    } else if (d.select) {
+      const proj = d.select.aggregate && d.select.aggregate !== "NONE"
+        ? `${d.select.aggregate}(${d.select.column})` : d.select.column;
+      detail = `${d.select.connector_id} \u00B7 SELECT ${proj} FROM ${d.select.entity}`;
+    } else if (d.write) {
+      detail = `${d.write.connector_id} \u00B7 UPDATE ${d.write.entity} SET ${d.write.column}`;
+    }
+    const bindBtn = el("button", { class: "btn small ghost", onClick: () => bindExternalElement(d), disabled: !draft || !hasConn }, "Datensatz");
+    const sqlBtn = el("button", { class: "btn small ghost", onClick: () => bindSqlSelect(d), disabled: !draft || !hasConn }, "SQL-Select");
+    const writeBtn = el("button", { class: "btn small ghost", onClick: () => bindSqlWrite(d), disabled: !draft || !hasConn }, "SQL-Write");
+    return [d.name, d.data_type, src, detail, el("div", { class: "row-actions" }, bindBtn, sqlBtn, writeBtn)];
   });
   const elemBlock = el("div", null,
     el("div", { class: "sub-h" }, el("h3", null, "Datenelemente")),
@@ -3063,6 +3076,276 @@ function bindExternalElement(element) {
       await refreshSchema(); render(); toast("ok", "Datenelement extern angebunden");
     } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
   }, "Anbinden");
+}
+
+// --- 11.2b SQL-Select-Assistent (C4-C6) -----------------------------------
+
+function sqlQuoteIdent(name) { return '"' + name + '"'; }
+function sqlOpText(op) {
+  return { EQ: "=", NE: "<>", LT: "<", LE: "<=", GT: ">", GE: ">=", LIKE: "LIKE", IN: "IN" }[op];
+}
+function sqlResultType(aggregate, columnType) {
+  return aggregate === "COUNT" ? "INTEGER" : aggregate === "AVG" ? "FLOAT" : columnType;
+}
+// Client-side mirror of compile_select for the live preview (the server stays
+// the sole authority; a wrong binding is rejected with 422 + C4-C6 findings).
+function sqlSelectPreview(s) {
+  const proj = s.aggregate === "NONE" ? sqlQuoteIdent(s.column) : `${s.aggregate}(${sqlQuoteIdent(s.column)})`;
+  let sql = `SELECT ${proj} FROM ${s.entity.split(".").map(sqlQuoteIdent).join(".")}`;
+  const where = s.filters.map((f, i) => `${sqlQuoteIdent(f.column)} ${sqlOpText(f.operator)} :f${i}`);
+  if (where.length) sql += " WHERE " + where.join(" AND ");
+  if (s.cardinality === "FIRST_ORDERED" && s.order_by.length) {
+    sql += " ORDER BY " + s.order_by.map((o) => sqlQuoteIdent(o.column) + (o.descending ? " DESC" : "")).join(", ") + " LIMIT 1";
+  }
+  return sql;
+}
+
+function bindSqlSelect(element) {
+  const schema = state.schema;
+  const conns = Object.values(schema.connectors || {});
+  const instanceElems = Object.values(schema.data_elements).filter((d) => d.source !== "EXTERNAL" && d.id !== element.id);
+  const sourceType = (id) => { const e = schema.data_elements[id]; return e ? e.data_type : null; };
+
+  const conn = el("select", null, ...conns.map((c) => el("option", { value: c.id }, `${c.name} (${c.id})`)));
+  const entity = el("input", { type: "text", placeholder: "z. B. Kunde" });
+  const colInput = el("input", { type: "text", placeholder: "z. B. name", list: "pw-sql-cols" });
+  const colDatalist = el("datalist", { id: "pw-sql-cols" });
+  const colType = el("select", null, ...DATA_TYPES.map((t) => el("option", { value: t }, t)));
+  colType.value = element.data_type;
+  const agg = el("select", null, ...SQL_AGGREGATES.map((a) => el("option", { value: a }, a === "NONE" ? "\u2014 kein \u2014" : a)));
+  const card = el("select", null, ...SQL_CARDINALITIES.map(([v, l]) => el("option", { value: v }, l)));
+  const uniqueCol = el("input", { type: "text", placeholder: "z. B. kd_id" });
+  const orderCol = el("input", { type: "text", placeholder: "Sortierspalte" });
+  const orderDesc = el("input", { type: "checkbox" });
+  const preview = el("pre", { class: "code-block" });
+  const typeHint = el("div", { class: "sub" });
+  const cardHint = el("div", { class: "sub" });
+  const filtersBox = el("div", null);
+  let columns = null;
+  const filters = [];
+
+  function applyColType() {
+    if (!columns) return;
+    const hit = columns.find((c) => c.column === colInput.value.trim());
+    if (hit && hit.data_type) colType.value = hit.data_type;
+  }
+  async function loadColumns() {
+    if (!conn.value || !entity.value.trim()) { toast("info", "Erst Connector und Entit\u00E4t w\u00E4hlen"); return; }
+    try {
+      columns = await api.get(`/v1/connectors/${conn.value}/columns?entity=${encodeURIComponent(entity.value.trim())}`);
+      clear(colDatalist);
+      columns.forEach((c) => colDatalist.appendChild(el("option", { value: c.column }, `${c.sql_type} \u2192 ${c.data_type || "?"}`)));
+      applyColType(); refresh();
+      toast("ok", `${columns.length} Spalten geladen`);
+    } catch (err) { columns = null; const d = describeError(err); toast("info", "Keine Live-Spalten \u2013 Namen/Typ manuell", d.lines); }
+  }
+
+  function spec() {
+    return {
+      connector_id: conn.value,
+      entity: entity.value.trim(),
+      column: colInput.value.trim(),
+      column_type: colType.value,
+      aggregate: agg.value,
+      filters: filters.filter((f) => f.column.trim() && f.source)
+        .map((f) => ({ column: f.column.trim(), column_type: sourceType(f.source), operator: f.operator, key_element_id: f.source })),
+      cardinality: card.value,
+      order_by: (card.value === "FIRST_ORDERED" && orderCol.value.trim())
+        ? [{ column: orderCol.value.trim(), descending: orderDesc.checked }] : [],
+      unique_column: uniqueCol.value.trim(),
+    };
+  }
+  function refresh() {
+    const s = spec();
+    preview.textContent = (s.column && s.entity) ? sqlSelectPreview(s) : "\u2026";
+    const rt = sqlResultType(s.aggregate, s.column_type);
+    const ok4 = rt === element.data_type;
+    typeHint.textContent = `Ergebnistyp ${rt} ${ok4 ? "\u2713 passt zu" : "\u2717 passt nicht zu"} \u201E${element.name}\u201C (${element.data_type})`;
+    typeHint.className = "sub " + (ok4 ? "ok-hint" : "bad-hint");
+    let ok6 = true, msg = "";
+    if (s.cardinality === "KEY_UNIQUE") {
+      ok6 = !!s.unique_column && s.filters.some((f) => f.operator === "EQ" && f.column === s.unique_column);
+      msg = ok6 ? "H\u00F6chstens eine Zeile (eindeutiger Schl\u00FCssel)" : "Gleichheitsfilter auf die eindeutige Spalte n\u00F6tig";
+    } else if (s.cardinality === "AGGREGATE") {
+      ok6 = s.aggregate !== "NONE";
+      msg = ok6 ? "Aggregat liefert genau eine Zeile" : "Aggregat w\u00E4hlen";
+    } else {
+      ok6 = s.order_by.length > 0;
+      msg = ok6 ? "Erste Zeile nach Sortierung" : "Sortierspalte angeben";
+    }
+    cardHint.textContent = (ok6 ? "\u2713 " : "\u2717 ") + msg;
+    cardHint.className = "sub " + (ok6 ? "ok-hint" : "bad-hint");
+    uniqueRow.style.display = s.cardinality === "KEY_UNIQUE" ? "" : "none";
+    orderRow.style.display = s.cardinality === "FIRST_ORDERED" ? "" : "none";
+  }
+
+  function buildFilterRow(f) {
+    const col = el("input", { type: "text", placeholder: "DB-Spalte", list: "pw-sql-cols", value: f.column });
+    col.addEventListener("input", () => { f.column = col.value; refresh(); });
+    const opSel = el("select", null, ...SQL_OPERATORS.map(([v, l]) => el("option", { value: v }, l)));
+    opSel.value = f.operator;
+    opSel.addEventListener("change", () => { f.operator = opSel.value; refresh(); });
+    const srcSel = el("select", null, ...instanceElems.map((d) => el("option", { value: d.id }, `${d.name} (${d.data_type})`)));
+    srcSel.value = f.source;
+    srcSel.addEventListener("change", () => { f.source = srcSel.value; refresh(); });
+    const rm = el("button", { class: "btn small danger", type: "button", onClick: () => { const i = filters.indexOf(f); if (i >= 0) filters.splice(i, 1); renderFilters(); refresh(); } }, "\u00D7");
+    return el("div", { class: "check-row" }, col, opSel, srcSel, rm);
+  }
+  function renderFilters() { clear(filtersBox); filters.forEach((f) => filtersBox.appendChild(buildFilterRow(f))); }
+  function addFilter() {
+    filters.push({ column: "", operator: "EQ", source: instanceElems.length ? instanceElems[0].id : "" });
+    renderFilters(); refresh();
+  }
+
+  conn.addEventListener("change", refresh);
+  entity.addEventListener("input", refresh);
+  colInput.addEventListener("input", () => { applyColType(); refresh(); });
+  colType.addEventListener("change", refresh);
+  agg.addEventListener("change", refresh);
+  card.addEventListener("change", refresh);
+  uniqueCol.addEventListener("input", refresh);
+  orderCol.addEventListener("input", refresh);
+  orderDesc.addEventListener("change", refresh);
+
+  const uniqueRow = el("label", { class: "field" }, "Eindeutige Spalte (Schl\u00FCssel)", uniqueCol);
+  const orderRow = el("label", { class: "field" }, "Sortierung",
+    el("div", { class: "check-row" }, orderCol, el("label", { class: "check-inline" }, orderDesc, " absteigend")));
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Connector", conns.length ? conn : el("span", { class: "muted" }, "Erst einen Connector registrieren.")),
+    el("label", { class: "field" }, "Entit\u00E4t/Tabelle", el("div", { class: "check-row" }, entity, el("button", { class: "btn small", type: "button", onClick: loadColumns }, "Spalten laden"))),
+    el("label", { class: "field" }, "Ergebnis-Spalte", colInput),
+    el("label", { class: "field" }, "Spaltentyp", colType),
+    el("label", { class: "field" }, "Aggregat", agg),
+    el("label", { class: "field" }, "Kardinalit\u00E4t", card),
+    uniqueRow, orderRow,
+    el("div", { class: "sub-h" }, el("h3", null, "Filter (WHERE)"), el("span", { style: "flex:1" }), el("button", { class: "btn small", type: "button", onClick: addFilter }, "+ Filter")),
+    filtersBox,
+    el("div", { class: "sub-h" }, el("h3", null, "Vorschau")),
+    typeHint, cardHint, preview, colDatalist);
+
+  openModal(`SQL-Select \u2013 ${element.name}`, body, async () => {
+    const s = spec();
+    if (!s.connector_id || !s.entity || !s.column) { toast("info", "Connector, Entit\u00E4t und Ergebnis-Spalte angeben"); return false; }
+    try {
+      await api.post(`/schemas/${state.schemaId}/data-elements/${element.id}/sql-select`, s);
+      await refreshSchema(); render(); toast("ok", "Datenelement per SQL-Select angebunden");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Anbinden");
+  renderFilters(); refresh();
+}
+
+// --- 11.2c SQL-Write-Assistent (C7-C9) ------------------------------------
+
+// Client-side mirror of compile_update for the live preview (server-authoritative).
+function sqlUpdatePreview(s) {
+  let sql = `UPDATE ${s.entity.split(".").map(sqlQuoteIdent).join(".")} SET ${sqlQuoteIdent(s.column)} = :val`;
+  const where = s.filters.map((f, i) => `${sqlQuoteIdent(f.column)} ${sqlOpText(f.operator)} :f${i}`);
+  if (where.length) sql += " WHERE " + where.join(" AND ");
+  return sql;
+}
+
+function bindSqlWrite(element) {
+  const schema = state.schema;
+  const conns = Object.values(schema.connectors || {});
+  const instanceElems = Object.values(schema.data_elements).filter((d) => d.source !== "EXTERNAL" && d.id !== element.id);
+  const sourceType = (id) => { const e = schema.data_elements[id]; return e ? e.data_type : null; };
+
+  const conn = el("select", null, ...conns.map((c) => el("option", { value: c.id }, `${c.name} (${c.id})`)));
+  const entity = el("input", { type: "text", placeholder: "z. B. Kunde" });
+  const colInput = el("input", { type: "text", placeholder: "z. B. status", list: "pw-sqlw-cols" });
+  const colDatalist = el("datalist", { id: "pw-sqlw-cols" });
+  const colType = el("select", null, ...DATA_TYPES.map((t) => el("option", { value: t }, t)));
+  colType.value = element.data_type;
+  const uniqueCol = el("input", { type: "text", placeholder: "z. B. kd_id" });
+  const preview = el("pre", { class: "code-block" });
+  const typeHint = el("div", { class: "sub" });
+  const cardHint = el("div", { class: "sub" });
+  const filtersBox = el("div", null);
+  let columns = null;
+  const filters = [];
+
+  function applyColType() {
+    if (!columns) return;
+    const hit = columns.find((c) => c.column === colInput.value.trim());
+    if (hit && hit.data_type) colType.value = hit.data_type;
+  }
+  async function loadColumns() {
+    if (!conn.value || !entity.value.trim()) { toast("info", "Erst Connector und Entit\u00E4t w\u00E4hlen"); return; }
+    try {
+      columns = await api.get(`/v1/connectors/${conn.value}/columns?entity=${encodeURIComponent(entity.value.trim())}`);
+      clear(colDatalist);
+      columns.forEach((c) => colDatalist.appendChild(el("option", { value: c.column }, `${c.sql_type} \u2192 ${c.data_type || "?"}`)));
+      applyColType(); refresh();
+      toast("ok", `${columns.length} Spalten geladen`);
+    } catch (err) { columns = null; const d = describeError(err); toast("info", "Keine Live-Spalten \u2013 Namen/Typ manuell", d.lines); }
+  }
+
+  function spec() {
+    return {
+      connector_id: conn.value,
+      entity: entity.value.trim(),
+      column: colInput.value.trim(),
+      column_type: colType.value,
+      filters: filters.filter((f) => f.column.trim() && f.source)
+        .map((f) => ({ column: f.column.trim(), column_type: sourceType(f.source), operator: f.operator, key_element_id: f.source })),
+      unique_column: uniqueCol.value.trim(),
+    };
+  }
+  function refresh() {
+    const s = spec();
+    preview.textContent = (s.column && s.entity) ? sqlUpdatePreview(s) : "\u2026";
+    const ok7 = s.column_type === element.data_type;
+    typeHint.textContent = `Zielspalte ${s.column_type} ${ok7 ? "\u2713 passt zu" : "\u2717 passt nicht zu"} \u201E${element.name}\u201C (${element.data_type})`;
+    typeHint.className = "sub " + (ok7 ? "ok-hint" : "bad-hint");
+    const ok9 = !!s.unique_column && s.filters.some((f) => f.operator === "EQ" && f.column === s.unique_column);
+    cardHint.textContent = (ok9 ? "\u2713 " : "\u2717 ") + (ok9 ? "Trifft genau eine Zeile (eindeutiger Schl\u00FCssel)" : "Gleichheitsfilter auf die eindeutige Spalte n\u00F6tig");
+    cardHint.className = "sub " + (ok9 ? "ok-hint" : "bad-hint");
+  }
+
+  function buildFilterRow(f) {
+    const col = el("input", { type: "text", placeholder: "DB-Spalte", list: "pw-sqlw-cols", value: f.column });
+    col.addEventListener("input", () => { f.column = col.value; refresh(); });
+    const opSel = el("select", null, ...SQL_OPERATORS.map(([v, l]) => el("option", { value: v }, l)));
+    opSel.value = f.operator;
+    opSel.addEventListener("change", () => { f.operator = opSel.value; refresh(); });
+    const srcSel = el("select", null, ...instanceElems.map((d) => el("option", { value: d.id }, `${d.name} (${d.data_type})`)));
+    srcSel.value = f.source;
+    srcSel.addEventListener("change", () => { f.source = srcSel.value; refresh(); });
+    const rm = el("button", { class: "btn small danger", type: "button", onClick: () => { const i = filters.indexOf(f); if (i >= 0) filters.splice(i, 1); renderFilters(); refresh(); } }, "\u00D7");
+    return el("div", { class: "check-row" }, col, opSel, srcSel, rm);
+  }
+  function renderFilters() { clear(filtersBox); filters.forEach((f) => filtersBox.appendChild(buildFilterRow(f))); }
+  function addFilter() {
+    filters.push({ column: "", operator: "EQ", source: instanceElems.length ? instanceElems[0].id : "" });
+    renderFilters(); refresh();
+  }
+
+  conn.addEventListener("change", refresh);
+  entity.addEventListener("input", refresh);
+  colInput.addEventListener("input", () => { applyColType(); refresh(); });
+  colType.addEventListener("change", refresh);
+  uniqueCol.addEventListener("input", refresh);
+
+  const body = el("div", { class: "form-grid" },
+    el("label", { class: "field" }, "Connector", conns.length ? conn : el("span", { class: "muted" }, "Erst einen Connector registrieren.")),
+    el("label", { class: "field" }, "Entit\u00E4t/Tabelle", el("div", { class: "check-row" }, entity, el("button", { class: "btn small", type: "button", onClick: loadColumns }, "Spalten laden"))),
+    el("label", { class: "field" }, "Ziel-Spalte", colInput),
+    el("label", { class: "field" }, "Spaltentyp", colType),
+    el("label", { class: "field" }, "Eindeutige Spalte (Schl\u00FCssel)", uniqueCol),
+    el("div", { class: "sub-h" }, el("h3", null, "Filter (WHERE)"), el("span", { style: "flex:1" }), el("button", { class: "btn small", type: "button", onClick: addFilter }, "+ Filter")),
+    filtersBox,
+    el("div", { class: "sub-h" }, el("h3", null, "Vorschau")),
+    typeHint, cardHint, preview, colDatalist);
+
+  openModal(`SQL-Write \u2013 ${element.name}`, body, async () => {
+    const s = spec();
+    if (!s.connector_id || !s.entity || !s.column) { toast("info", "Connector, Entit\u00E4t und Ziel-Spalte angeben"); return false; }
+    try {
+      await api.post(`/schemas/${state.schemaId}/data-elements/${element.id}/sql-write`, s);
+      await refreshSchema(); render(); toast("ok", "Datenelement per SQL-Write angebunden");
+    } catch (err) { const d = describeError(err); toast("err", d.title, d.lines); return false; }
+  }, "Anbinden");
+  renderFilters(); refresh();
 }
 
 // --- 11.3 Automatik-Schritt-Binding ---------------------------------------

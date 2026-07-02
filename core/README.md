@@ -36,7 +36,12 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   Datenelement bindet an einen registrierten Connector; ein `INSTANCE`-Element
   trägt keine Bindung), C2 (der Schlüssel verweist auf ein existierendes
   `INSTANCE`-Element und nicht auf sich selbst), C3 (die gebundene Entität ist
-  nicht leer). Die schema-
+  nicht leer). Strukturierte SQL-Skizzen C4-C9 (typ- und kardinalitätssichere
+  **Skalar**-Bindung, ohne Freitext-SQL): C4/C7 (der Projektions- bzw.
+  Zielspaltentyp passt zum Datenelement), C5/C8 (jeder Filter ist wohlgeformt,
+  typkonform gegen ein `INSTANCE`-Quellelement und auf jedem Pfad vor dem Lesen/
+  Schreiben versorgt), C6/C9 (das `SELECT` liefert bzw. das `UPDATE` trifft
+  **höchstens eine** Zeile). Die schema-
   übergreifenden Regeln nutzen einen **Resolver**.
 - **Change Operations** (`operations.py`): `serial_insert`, `parallel_insert`
   (AND-Block), `conditional_insert` (XOR-Block), `add_data_element`,
@@ -47,6 +52,10 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   `register_connector`/`bind_external_data` (externe Daten: Connector
   registrieren bzw. ein Datenelement als `EXTERNAL` an eine Connector-Entität
   binden),
+  `bind_sql_select`/`bind_sql_write` (typ- und kardinalitätssichere
+  **Skalar**-Bindung: ein Datenelement wird per strukturiertem, deterministisch
+  kompiliertem `SELECT` gefüllt bzw. per `UPDATE` zurückgeschrieben — C4–C9,
+  kein Freitext-SQL),
   `insert_subprocess`/`set_subprocess_mapping` (Sub-Prozess),
   `convert_activity_to_subprocess` (eine Aktivität in einen an ein Submodell
   gebundenen `SUBPROCESS` umwandeln), `set_subprocess_binding` (Bindung eines
@@ -137,7 +146,19 @@ gegen die Strukturregeln K1–K3. Ein inkorrektes Modell kann nicht entstehen.
   Connector aufgelöst; Schlüssel und Werte werden stets **parametrisiert**
   übergeben (kein String-Concat ? kein Injection-Risiko), Zugangsdaten liegen
   nur serverseitig im Connector, nie im Schema. `InMemoryConnector` ist die
-  Referenz-Implementierung für Tests/Demos.
+  Referenz-Implementierung für Tests/Demos. Über die Record-Bindung hinaus gibt
+  es eine **typ- und kardinalitätssichere Skalar-Bindung** (Correctness by
+  Construction auch für die SQL-Erzeugung): der Modellierer beschreibt eine
+  strukturierte Skizze (Entität, eine projizierte Spalte, strukturierte Filter,
+  Kardinalitäts-Garantie), aus der ein **deterministischer, parametrisierter**
+  `SELECT`/`UPDATE` kompiliert wird (`compile_select`/`compile_update`); die
+  Regeln C4–C9 stellen sicher, dass das Ergebnis **typgleich** zum Datenelement
+  ist und **höchstens eine** Zeile trifft. Derselbe strukturierte Zugriff wird
+  vom **OData-v4-Connector** (`odata.py`, Dynamics 365 / SAP Gateway) über
+  `$select`/`$filter`/`$orderby`/`$top`/`$count`/`$apply` bzw. einen keyed
+  `PATCH` bedient — **dieselbe SPI**, sodass Kern, Regeln und GUI unverändert
+  bleiben. Reale Verbindungen (SQLAlchemy-URL bzw. OData-Service + Bearer-Token)
+  liegen serverseitig in der Connection-Registry (`connections.py`).
 
 - **Offene Integrationsschicht** (`/v1`-Router in `api.py`, `integration_runtime.py`,
   `outbox.py`, `connections.py`): eine versionierte, maschinen-authentifizierte
@@ -436,6 +457,30 @@ POST /schemas/{id}/data-elements/kunde/external { "connector_id": "erp", "entity
 
 Ein unbekannter Connector (C1), ein fehlender/externer Schlüssel (C2) oder eine
 leere Entität (C3) wird mit **HTTP 422** abgelehnt.
+
+Alternativ füllt eine **typ- und kardinalitätssichere Skalar-Bindung** ein
+Datenelement aus **einem** Wert einer externen Quelle bzw. schreibt es zurück —
+ohne Freitext-SQL, mit Correctness by Construction für die SQL-Erzeugung
+(C4–C9):
+
+```text
+POST /schemas/{id}/data-elements/kundenname/sql-select
+  { "connector_id": "erp", "entity": "Kunde", "column": "name",
+    "column_type": "STRING", "cardinality": "KEY_UNIQUE", "unique_column": "kd_id",
+    "filters": [ { "column": "kd_id", "column_type": "INTEGER",
+                   "operator": "EQ", "key_element_id": "key" } ] }
+POST /schemas/{id}/data-elements/status/sql-write
+  { "connector_id": "erp", "entity": "Kunde", "column": "status",
+    "column_type": "STRING", "unique_column": "kd_id",
+    "filters": [ { "column": "kd_id", "column_type": "INTEGER",
+                   "operator": "EQ", "key_element_id": "key" } ] }
+```
+
+Ein nicht zum Datenelement passender Ergebnistyp (C4/C7), ein fehlerhafter
+Filter (C5/C8) oder eine nicht auf genau eine Zeile eingegrenzte Abfrage (C6/C9)
+wird mit **HTTP 422** abgelehnt. `GET /v1/connectors/{id}/columns?entity=…`
+liefert per Introspektion die Spalten samt gemapptem Datentyp für den geführten
+Assistenten.
 
 BPMN 2.0 dient als Austauschformat auf der geprüften Block-Teilsprache:
 

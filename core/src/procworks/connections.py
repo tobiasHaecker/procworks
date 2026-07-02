@@ -31,7 +31,8 @@ from procworks.dal import (
     Record,
     SqlAlchemyConnector,
 )
-from procworks.model import ConnectorKind
+from procworks.model import ConnectorKind, SqlSelectBinding, SqlWriteBinding
+from procworks.odata import ODataConnector
 
 #: ``${ENV_VAR}`` secret reference inside a connection URL/DSN.
 _SECRET_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -68,6 +69,9 @@ class ConnectionConfig(BaseModel):
     url: str
     key_column: str = "id"
     entity_key_columns: dict[str, str] = Field(default_factory=dict)
+    #: For OData connectors (Dynamics 365 / SAP Gateway): the name of the
+    #: environment variable holding the bearer token (never the token itself).
+    token_env: str = ""
 
 
 class _LazyConnector:
@@ -89,6 +93,30 @@ class _LazyConnector:
 
     def query(self, entity: str, filters: Record) -> list[Record]:
         return self._registry.connector(self._connector_id).query(entity, filters)
+
+    def select_scalar(
+        self, binding: SqlSelectBinding, key_values: Record
+    ) -> object:
+        connector = self._registry.connector(self._connector_id)
+        method = getattr(connector, "select_scalar", None)
+        if not callable(method):
+            raise DataAccessError(
+                f"connector '{self._connector_id}' does not support scalar SQL selects"
+            )
+        result: object = method(binding, key_values)
+        return result
+
+    def update_scalar(
+        self, binding: SqlWriteBinding, value: object, key_values: Record
+    ) -> int:
+        connector = self._registry.connector(self._connector_id)
+        method = getattr(connector, "update_scalar", None)
+        if not callable(method):
+            raise DataAccessError(
+                f"connector '{self._connector_id}' does not support scalar SQL writes"
+            )
+        result: int = method(binding, value, key_values)
+        return result
 
 
 class ConnectionRegistry:
@@ -127,6 +155,15 @@ class ConnectionRegistry:
 
     @staticmethod
     def _build(config: ConnectionConfig) -> Connector:
+        if config.kind in (ConnectorKind.DYNAMICS_365, ConnectorKind.SAP):
+            token: str | None = None
+            if config.token_env:
+                token = os.environ.get(config.token_env)
+                if token is None:
+                    raise DataAccessError(
+                        f"secret '{config.token_env}' is not set in the environment"
+                    )
+            return ODataConnector(_resolve_secrets(config.url), token=token)
         engine = create_engine(_resolve_secrets(config.url))
         return SqlAlchemyConnector(
             engine,
@@ -147,6 +184,18 @@ class ConnectionRegistry:
 
         rows = self.connector(connector_id).query(entity, {})
         return rows[: max(0, limit)]
+
+    def columns(self, connector_id: str, entity: str) -> list[dict[str, object]]:
+        """Reflect a connector entity's columns for the GUI mapping assistant."""
+
+        connector = self.connector(connector_id)
+        method = getattr(connector, "columns", None)
+        if not callable(method):
+            raise DataAccessError(
+                f"connector '{connector_id}' does not support column introspection"
+            )
+        result: list[dict[str, object]] = method(entity)
+        return result
 
     def data_access_layer(self) -> DataAccessLayer:
         """Return a DAL wired with a lazy connector per registered config."""

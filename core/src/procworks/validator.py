@@ -24,20 +24,26 @@ from procworks.model import (
     STAFF_LEAF_KINDS,
     WRITE_MODES,
     ActivityTemplate,
+    AggregateKind,
     AutomationKind,
+    Cardinality,
     DataSourceKind,
+    DataType,
+    FilterOperator,
     FollowUpTrigger,
     LifecycleState,
     NodeType,
     OrgModel,
     ProcessSchema,
     ServiceBinding,
+    SqlSelectBinding,
     StaffRule,
     StaffRuleKind,
     SubProcessBinding,
     WidgetKind,
     XorDecision,
     XorDecisionKind,
+    aggregate_result_type,
     discriminator_kind,
     widget_matches_type,
 )
@@ -92,6 +98,8 @@ def validate(
     findings += _check_data_flow(schema)
     findings += _check_forms(schema)
     findings += _check_connectors(schema)
+    findings += _check_scalar_queries(schema)
+    findings += _check_scalar_writes(schema)
     findings += _check_resources(schema)
     findings += _check_integration(schema)
     findings += _check_composition(schema, resolver)
@@ -800,8 +808,11 @@ def _check_connectors(schema: ProcessSchema) -> list[ValidationFinding]:
 
     findings: list[ValidationFinding] = []
     for element in schema.data_elements.values():
+        bindings = [
+            b for b in (element.external, element.select, element.write) if b is not None
+        ]
         if element.source is DataSourceKind.INSTANCE:
-            if element.external is not None:
+            if bindings:
                 findings.append(
                     ValidationFinding(
                         rule="C1",
@@ -811,6 +822,21 @@ def _check_connectors(schema: ProcessSchema) -> list[ValidationFinding]:
                         ),
                     )
                 )
+            continue
+        if len(bindings) > 1:
+            findings.append(
+                ValidationFinding(
+                    rule="C1",
+                    message=(
+                        f"element '{element.id}' must carry exactly one external "
+                        f"binding kind (record, scalar-select or scalar-write)"
+                    ),
+                )
+            )
+            continue
+        if element.select is not None or element.write is not None:
+            # Scalar-bound EXTERNAL element: the record rules C1-C3 do not apply;
+            # well-formedness/typing is checked by C4-C6 (select) / C7-C9 (write).
             continue
         binding = element.external
         if binding is None:
@@ -864,6 +890,376 @@ def _check_connectors(schema: ProcessSchema) -> list[ValidationFinding]:
                     message=(
                         f"key element '{binding.key_element_id}' of '{element.id}' must be "
                         f"an INSTANCE element"
+                    ),
+                )
+            )
+    return findings
+
+
+# --- C4-C6: structured scalar SQL-select bindings ------------------------
+
+#: Filter operators that require an orderable type (numeric or date).
+_ORDER_OPERATORS = frozenset(
+    {FilterOperator.LT, FilterOperator.LE, FilterOperator.GT, FilterOperator.GE}
+)
+#: Data types that support ordering comparisons.
+_ORDERABLE_TYPES = frozenset({DataType.INTEGER, DataType.FLOAT, DataType.DATE})
+
+
+def _operator_matches_type(operator: FilterOperator, data_type: DataType) -> bool:
+    """Whether a filter ``operator`` is valid for a column of ``data_type`` (C5)."""
+
+    if operator is FilterOperator.LIKE:
+        return data_type is DataType.STRING
+    if operator in _ORDER_OPERATORS:
+        return data_type in _ORDERABLE_TYPES
+    return True  # EQ / NE / IN apply to any type
+
+
+def _check_query_cardinality(
+    element_id: str, binding: SqlSelectBinding
+) -> list[ValidationFinding]:
+    """C6: the select must structurally guarantee at most one result row."""
+
+    findings: list[ValidationFinding] = []
+    if binding.cardinality is Cardinality.KEY_UNIQUE:
+        if not binding.unique_column.strip():
+            findings.append(
+                ValidationFinding(
+                    rule="C6",
+                    message=(
+                        f"element '{element_id}' uses KEY_UNIQUE but declares no "
+                        f"unique column"
+                    ),
+                )
+            )
+        elif not any(
+            f.operator is FilterOperator.EQ and f.column == binding.unique_column
+            for f in binding.filters
+        ):
+            findings.append(
+                ValidationFinding(
+                    rule="C6",
+                    message=(
+                        f"element '{element_id}' uses KEY_UNIQUE but has no equality "
+                        f"filter on unique column '{binding.unique_column}'"
+                    ),
+                )
+            )
+    elif binding.cardinality is Cardinality.AGGREGATE:
+        if binding.aggregate is AggregateKind.NONE:
+            findings.append(
+                ValidationFinding(
+                    rule="C6",
+                    message=(
+                        f"element '{element_id}' uses AGGREGATE cardinality but "
+                        f"projects a plain column"
+                    ),
+                )
+            )
+    elif not binding.order_by:  # FIRST_ORDERED
+        findings.append(
+            ValidationFinding(
+                rule="C6",
+                message=(
+                    f"element '{element_id}' uses FIRST_ORDERED but has an empty "
+                    f"ORDER BY"
+                ),
+            )
+        )
+    return findings
+
+
+def _check_scalar_queries(schema: ProcessSchema) -> list[ValidationFinding]:
+    """Structured scalar SQL-select rules C4-C6 (concept §6).
+
+    Silent unless a data element carries a ``select`` binding, so it never
+    affects models without scalar SQL bindings (fully additive).
+
+    C4: the select projection's result type (derived via
+        :func:`aggregate_result_type`) matches the element's declared type -- the
+        result *fits* the data element it fills.
+    C5: connector/entity/column are well-formed; every filter references an
+        existing INSTANCE source element of matching type with a type-compatible
+        operator; and each filter source is guaranteed written on every path
+        before any node that reads the element (D1 coupling, like the K7
+        discriminator).
+    C6: the select structurally yields at most one row (see
+        :func:`_check_query_cardinality`).
+    """
+
+    if not any(el.select is not None for el in schema.data_elements.values()):
+        return []
+
+    findings: list[ValidationFinding] = []
+    written_before = _must_written_before(schema)
+    for element in schema.data_elements.values():
+        binding = element.select
+        if binding is None or element.source is not DataSourceKind.EXTERNAL:
+            # INSTANCE elements carrying a select are already reported by C1.
+            continue
+
+        # C4: the projection result type must match the element type.
+        result_type = aggregate_result_type(binding.aggregate, binding.column_type)
+        if result_type is not element.data_type:
+            findings.append(
+                ValidationFinding(
+                    rule="C4",
+                    message=(
+                        f"element '{element.id}' is {element.data_type.value} but its "
+                        f"select projection yields {result_type.value}"
+                    ),
+                )
+            )
+
+        # C5: connector / entity / column well-formedness.
+        if binding.connector_id not in schema.connectors:
+            findings.append(
+                ValidationFinding(
+                    rule="C5",
+                    message=(
+                        f"element '{element.id}' references unknown connector "
+                        f"'{binding.connector_id}'"
+                    ),
+                )
+            )
+        if not binding.entity.strip():
+            findings.append(
+                ValidationFinding(
+                    rule="C5",
+                    message=f"element '{element.id}' has an empty select entity",
+                )
+            )
+        if not binding.column.strip():
+            findings.append(
+                ValidationFinding(
+                    rule="C5",
+                    message=f"element '{element.id}' has an empty projection column",
+                )
+            )
+
+        # C5: filters -- source existence/type, operator compatibility, D1 coupling.
+        reading_nodes = [
+            access.node_id
+            for access in schema.data_accesses
+            if access.element_id == element.id and access.mode in READ_MODES
+        ]
+        for item in binding.filters:
+            if not _operator_matches_type(item.operator, item.column_type):
+                findings.append(
+                    ValidationFinding(
+                        rule="C5",
+                        message=(
+                            f"element '{element.id}' uses operator {item.operator.value} "
+                            f"on a {item.column_type.value} filter column"
+                        ),
+                    )
+                )
+            source = schema.data_elements.get(item.key_element_id)
+            if source is None:
+                findings.append(
+                    ValidationFinding(
+                        rule="C5",
+                        message=(
+                            f"element '{element.id}' uses unknown filter source "
+                            f"'{item.key_element_id}'"
+                        ),
+                    )
+                )
+                continue
+            if source.source is not DataSourceKind.INSTANCE:
+                findings.append(
+                    ValidationFinding(
+                        rule="C5",
+                        message=(
+                            f"filter source '{item.key_element_id}' of '{element.id}' "
+                            f"must be an INSTANCE element"
+                        ),
+                    )
+                )
+                continue
+            if source.data_type is not item.column_type:
+                findings.append(
+                    ValidationFinding(
+                        rule="C5",
+                        message=(
+                            f"filter column type {item.column_type.value} of "
+                            f"'{element.id}' does not match source "
+                            f"'{item.key_element_id}' ({source.data_type.value})"
+                        ),
+                    )
+                )
+            for node_id in reading_nodes:
+                if item.key_element_id not in written_before.get(node_id, set()):
+                    findings.append(
+                        ValidationFinding(
+                            rule="C5",
+                            node_id=node_id,
+                            message=(
+                                f"filter source '{item.key_element_id}' of "
+                                f"'{element.id}' may be read before it is written on "
+                                f"some execution path"
+                            ),
+                        )
+                    )
+
+        # C6: cardinality guarantee.
+        findings += _check_query_cardinality(element.id, binding)
+    return findings
+
+
+# --- C7-C9: structured scalar SQL write-back bindings --------------------
+
+
+def _check_scalar_writes(schema: ProcessSchema) -> list[ValidationFinding]:
+    """Structured scalar SQL write-back rules C7-C9 (concept §7, Q4).
+
+    Silent unless a data element carries a ``write`` binding (fully additive).
+
+    C7: the target column's declared type matches the element's type -- the
+        written scalar *fits* the column it updates.
+    C8: connector/entity/column are well-formed; every filter references an
+        existing INSTANCE source element of matching type with a type-compatible
+        operator; and each filter source is guaranteed written on every path
+        before any node that writes the element (D1 coupling).
+    C9: the write targets exactly one row -- a declared ``unique_column`` with an
+        equality filter on it (an UPDATE never fans out to many rows).
+    """
+
+    if not any(el.write is not None for el in schema.data_elements.values()):
+        return []
+
+    findings: list[ValidationFinding] = []
+    written_before = _must_written_before(schema)
+    for element in schema.data_elements.values():
+        binding = element.write
+        if binding is None or element.source is not DataSourceKind.EXTERNAL:
+            continue
+
+        # C7: the target column type must match the element type.
+        if binding.column_type is not element.data_type:
+            findings.append(
+                ValidationFinding(
+                    rule="C7",
+                    message=(
+                        f"element '{element.id}' is {element.data_type.value} but its "
+                        f"write target column is {binding.column_type.value}"
+                    ),
+                )
+            )
+
+        # C8: connector / entity / column well-formedness.
+        if binding.connector_id not in schema.connectors:
+            findings.append(
+                ValidationFinding(
+                    rule="C8",
+                    message=(
+                        f"element '{element.id}' references unknown connector "
+                        f"'{binding.connector_id}'"
+                    ),
+                )
+            )
+        if not binding.entity.strip():
+            findings.append(
+                ValidationFinding(
+                    rule="C8",
+                    message=f"element '{element.id}' has an empty write entity",
+                )
+            )
+        if not binding.column.strip():
+            findings.append(
+                ValidationFinding(
+                    rule="C8",
+                    message=f"element '{element.id}' has an empty target column",
+                )
+            )
+
+        # C8: filters -- source existence/type, operator compatibility, D1 coupling.
+        writing_nodes = [
+            access.node_id
+            for access in schema.data_accesses
+            if access.element_id == element.id and access.mode in WRITE_MODES
+        ]
+        for item in binding.filters:
+            if not _operator_matches_type(item.operator, item.column_type):
+                findings.append(
+                    ValidationFinding(
+                        rule="C8",
+                        message=(
+                            f"element '{element.id}' uses operator {item.operator.value} "
+                            f"on a {item.column_type.value} filter column"
+                        ),
+                    )
+                )
+            source = schema.data_elements.get(item.key_element_id)
+            if source is None:
+                findings.append(
+                    ValidationFinding(
+                        rule="C8",
+                        message=(
+                            f"element '{element.id}' uses unknown filter source "
+                            f"'{item.key_element_id}'"
+                        ),
+                    )
+                )
+                continue
+            if source.source is not DataSourceKind.INSTANCE:
+                findings.append(
+                    ValidationFinding(
+                        rule="C8",
+                        message=(
+                            f"filter source '{item.key_element_id}' of '{element.id}' "
+                            f"must be an INSTANCE element"
+                        ),
+                    )
+                )
+                continue
+            if source.data_type is not item.column_type:
+                findings.append(
+                    ValidationFinding(
+                        rule="C8",
+                        message=(
+                            f"filter column type {item.column_type.value} of "
+                            f"'{element.id}' does not match source "
+                            f"'{item.key_element_id}' ({source.data_type.value})"
+                        ),
+                    )
+                )
+            for node_id in writing_nodes:
+                if item.key_element_id not in written_before.get(node_id, set()):
+                    findings.append(
+                        ValidationFinding(
+                            rule="C8",
+                            node_id=node_id,
+                            message=(
+                                f"filter source '{item.key_element_id}' of "
+                                f"'{element.id}' may be used before it is written on "
+                                f"some execution path"
+                            ),
+                        )
+                    )
+
+        # C9: single-row write guarantee.
+        if not binding.unique_column.strip():
+            findings.append(
+                ValidationFinding(
+                    rule="C9",
+                    message=(
+                        f"write of '{element.id}' declares no unique column -- an "
+                        f"UPDATE must target exactly one row"
+                    ),
+                )
+            )
+        elif not any(
+            f.operator is FilterOperator.EQ and f.column == binding.unique_column
+            for f in binding.filters
+        ):
+            findings.append(
+                ValidationFinding(
+                    rule="C9",
+                    message=(
+                        f"write of '{element.id}' has no equality filter on unique "
+                        f"column '{binding.unique_column}'"
                     ),
                 )
             )
